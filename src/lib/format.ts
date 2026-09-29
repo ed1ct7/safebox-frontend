@@ -1,3 +1,5 @@
+import type { ImportResult } from '../api/types';
+
 const UNITS = ['КБ', 'МБ', 'ГБ', 'ТБ'] as const;
 
 export function formatBytes(n: number): string {
@@ -24,4 +26,24 @@ export function plural(n: number, one: string, few: string, many: string): strin
   if (mod10 === 1 && mod100 !== 11) return `${n} ${one}`;
   if (mod10 >= 2 && mod10 <= 4 && (mod100 < 12 || mod100 > 14)) return `${n} ${few}`;
   return `${n} ${many}`;
+}
+
+/** Тост по итогам импорта (UF-7): «Импортировано: N» + ошибки и пропущенные дубликаты. */
+export function importSummary(
+  r: ImportResult,
+  source?: string,
+): { text: string; kind: 'success' | 'error' | 'info' } {
+  const from = source === undefined || source === '' ? '' : ` из «${source}»`;
+  if (r.imported === 0 && r.failed === 0) {
+    return r.skipped > 0
+      ? { text: `Уже в сейфе${from}: ${plural(r.skipped, 'дубликат', 'дубликата', 'дубликатов')}`, kind: 'info' }
+      : { text: `Нечего импортировать${from}`, kind: 'info' };
+  }
+  const parts = [`Импортировано${from}: ${r.imported}`];
+  if (r.failed > 0) parts.push(`ошибок: ${r.failed}`);
+  if (r.skipped > 0) parts.push(`дубликатов пропущено: ${r.skipped}`);
+  let text = parts.join(', ');
+  const first = r.failures[0];
+  if (first !== undefined) text += `\n${first.path}: ${first.message}`;
+  return { text, kind: r.failed > 0 ? 'error' : 'success' };
 }

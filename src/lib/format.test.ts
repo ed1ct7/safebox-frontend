@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { formatBytes, formatDateTime, plural } from './format';
+import { formatBytes, formatDateTime, importSummary, plural } from './format';
 
 describe('formatBytes', () => {
   it('байты без дробей', () => {
@@ -38,5 +38,30 @@ describe('plural', () => {
     expect(plural(5, 'объект', 'объекта', 'объектов')).toBe('5 объектов');
     expect(plural(11, 'объект', 'объекта', 'объектов')).toBe('11 объектов');
     expect(plural(21, 'объект', 'объекта', 'объектов')).toBe('21 объект');
+  });
+});
+
+describe('importSummary', () => {
+  const r = (imported: number, failed = 0, skipped = 0) => ({
+    imported,
+    failed,
+    skipped,
+    failures: failed > 0 ? [{ path: 'Папка/битый.jpg', message: 'Ошибка записи' }] : [],
+  });
+
+  it('обычный импорт', () => {
+    expect(importSummary(r(3))).toEqual({ text: 'Импортировано: 3', kind: 'success' });
+  });
+
+  it('ошибки и дубликаты — в одном тосте, первая ошибка подробно', () => {
+    const s = importSummary(r(2, 1, 4), 'Загрузки');
+    expect(s.kind).toBe('error');
+    expect(s.text).toBe(
+      'Импортировано из «Загрузки»: 2, ошибок: 1, дубликатов пропущено: 4\nПапка/битый.jpg: Ошибка записи',
+    );
+  });
+
+  it('всё уже было в сейфе', () => {
+    expect(importSummary(r(0, 0, 5))).toEqual({ text: 'Уже в сейфе: 5 дубликатов', kind: 'info' });
   });
 });

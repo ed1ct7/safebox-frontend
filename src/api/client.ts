@@ -1,7 +1,7 @@
 import type { ApiError } from './types';
 
 // Токен — sessionStorage: переживает перезагрузку вкладки, не переживает её
-// закрытие (рекомендация docs/api.md §1). В URL токен не попадает никогда:
+// закрытие (рекомендация docs/api.md). В URL токен не попадает никогда:
 // медиа ходит через HttpOnly-cookie sbx_media, которую сервер ставит при unlock.
 const TOKEN_KEY = 'sbx_token';
 
@@ -25,14 +25,55 @@ export function setToken(token: string | null): void {
 /** Любой 401 = сессия мертва: показываем экран входа (App слушает событие). */
 export const UNAUTHORIZED_EVENT = 'sbx:unauthorized';
 
+export const NETWORK_ERROR_MESSAGE = 'Нет соединения с сервером';
+
 export class ApiRequestError extends Error {
   constructor(
-    readonly status: number,
+    readonly status: number, // 0 — сеть недоступна
     readonly code: string,
     message: string,
   ) {
     super(message);
+    this.name = 'ApiRequestError';
   }
+}
+
+export function networkError(): ApiRequestError {
+  return new ApiRequestError(0, 'network', NETWORK_ERROR_MESSAGE);
+}
+
+/** 401: токен забываем и сообщаем приложению — оно само покажет экран входа. */
+export function handleUnauthorized(): void {
+  setToken(null);
+  window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
+}
+
+export function isUnauthorized(e: unknown): boolean {
+  return e instanceof ApiRequestError && e.status === 401;
+}
+
+/** Текст для тоста: message сервера уже на русском и готов к показу. */
+export function errorMessage(e: unknown, fallback: string): string {
+  return e instanceof Error && e.message !== '' ? e.message : fallback;
+}
+
+/** Пустое тело (204, lock) → undefined; не-JSON → null. */
+export function parseBody(text: string): unknown {
+  if (text.trim() === '') return undefined;
+  try {
+    return JSON.parse(text) as unknown;
+  } catch {
+    return null;
+  }
+}
+
+/** Ошибка из тела {"error":{"code","message"}}; тело не по контракту — общий текст. */
+export function toApiError(status: number, body: unknown): ApiRequestError {
+  const err = (body as Partial<ApiError> | null | undefined)?.error;
+  if (err !== undefined && typeof err.code === 'string' && typeof err.message === 'string') {
+    return new ApiRequestError(status, err.code, err.message);
+  }
+  return new ApiRequestError(status, 'internal', `Ошибка сервера (${status})`);
 }
 
 async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
@@ -43,38 +84,27 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (body !== undefined) headers['Content-Type'] = 'application/json';
 
   let res: Response;
+  let text: string;
   try {
     res = await fetch(path, {
       method,
       headers,
       body: body === undefined ? undefined : JSON.stringify(body),
     });
+    text = await res.text();
   } catch {
-    throw new ApiRequestError(0, 'network', 'Нет соединения с сервером');
+    throw networkError();
   }
 
-  if (res.status === 204) return undefined as T;
-
+  const data = parseBody(text);
   if (!res.ok) {
-    let code = 'internal';
-    let message = `Ошибка ${res.status}`;
-    try {
-      const parsed = (await res.json()) as ApiError;
-      if (parsed.error !== undefined) {
-        code = parsed.error.code;
-        message = parsed.error.message; // готовый русский текст для формы/тоста
-      }
-    } catch {
-      // тело не JSON — оставляем дефолт
-    }
-    if (res.status === 401) {
-      setToken(null);
-      window.dispatchEvent(new CustomEvent(UNAUTHORIZED_EVENT));
-    }
-    throw new ApiRequestError(res.status, code, message);
+    if (res.status === 401) handleUnauthorized();
+    throw toApiError(res.status, data);
   }
-
-  return (await res.json()) as T;
+  if (data === null) {
+    throw new ApiRequestError(res.status, 'bad_response', 'Некорректный ответ сервера');
+  }
+  return data as T;
 }
 
 export const api = {

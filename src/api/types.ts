@@ -1,5 +1,5 @@
-// Рукописные типы, синхронизированные с docs/api.md (репозиторий бэкенда, §4).
-// Источник правды по контракту — этот документ; менять только вместе с ним.
+// Рукописные типы, синхронизированные с docs/api.md репозитория бэкенда (раздел «Типы»).
+// Источник правды по контракту — этот документ и src/http/src/json.cpp; менять только вместе с ними.
 
 export type EntryKind = 'folder' | 'file' | 'photo' | 'video' | 'link';
 
@@ -61,6 +61,8 @@ export interface SearchHit {
 export interface ImportResult {
   imported: number;
   failed: number;
+  /** точные дубликаты (та же папка + имя без учёта регистра + размер) — сервер их не вставляет */
+  skipped: number;
   failures: { path: string; message: string }[];
 }
 
@@ -68,7 +70,7 @@ export interface ApiError {
   error: { code: string; message: string };
 }
 
-// Ответы, не расписанные в §4 api.md
+// Ответы эндпоинтов (разделы «Сейф», «Записи», «Поиск» api.md)
 export interface HeartbeatResponse {
   idleRemainingSec: number;
 }
