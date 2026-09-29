@@ -1,4 +1,4 @@
-import type { FolderNode } from '../api/types';
+import type { FolderNode, PathItem } from '../api/types';
 
 export interface TreeNode {
   id: number;
@@ -22,4 +22,31 @@ export function buildTree(nodes: FolderNode[]): TreeNode[] {
     }
   }
   return roots;
+}
+
+/** Папка и все её предки (для раскрытия дерева до текущей папки). */
+export function selfAndAncestors(nodes: FolderNode[], id: number): number[] {
+  const parentOf = new Map(nodes.map((n) => [n.id, n.parentId]));
+  const out: number[] = [];
+  const seen = new Set<number>();
+  for (let cur: number | null | undefined = id; cur != null && !seen.has(cur); cur = parentOf.get(cur)) {
+    seen.add(cur);
+    out.push(cur);
+  }
+  return out;
+}
+
+/**
+ * UF-10: «удалённая открытая папка возвращает на родителя». path — крошки
+ * открытой папки (от корня до неё включительно). Если удалена она сама или
+ * любой предок — возвращаемся к родителю самой верхней удалённой папки
+ * (null — корень). undefined — открытая папка цела, остаёмся.
+ */
+export function folderAfterDelete(
+  path: readonly PathItem[],
+  deleted: ReadonlySet<number>,
+): number | null | undefined {
+  const i = path.findIndex((p) => deleted.has(p.id));
+  if (i === -1) return undefined;
+  return i === 0 ? null : (path[i - 1]?.id ?? null);
 }
