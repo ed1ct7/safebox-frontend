@@ -13,26 +13,43 @@ type PushToast = (text: string, kind?: ToastKind) => void;
 
 const ToastCtx = createContext<PushToast>(() => undefined);
 
+const TOAST_MS = 4500;
+const ERROR_TOAST_MS = 8000; // ошибку нужно успеть прочитать
+const MAX_TOASTS = 5;
+
 let seq = 0;
 
 export function ToastProvider({ children }: { children: ReactNode }) {
   const [items, setItems] = useState<ToastItem[]>([]);
 
-  const push = useCallback<PushToast>((text, kind = 'info') => {
-    seq += 1;
-    const id = seq;
-    setItems((prev) => [...prev.slice(-4), { id, text, kind }]);
-    setTimeout(() => setItems((prev) => prev.filter((t) => t.id !== id)), 4500);
+  const dismiss = useCallback((id: number) => {
+    setItems((prev) => prev.filter((t) => t.id !== id));
   }, []);
+
+  const push = useCallback<PushToast>(
+    (text, kind = 'info') => {
+      seq += 1;
+      const id = seq;
+      setItems((prev) => [...prev.slice(-(MAX_TOASTS - 1)), { id, text, kind }]);
+      setTimeout(() => dismiss(id), kind === 'error' ? ERROR_TOAST_MS : TOAST_MS);
+    },
+    [dismiss],
+  );
 
   return (
     <ToastCtx.Provider value={push}>
       {children}
-      <div className="pointer-events-none fixed bottom-4 right-4 z-[70] flex flex-col items-end gap-2">
+      <div
+        aria-live="polite"
+        className="pointer-events-none fixed bottom-12 right-4 z-[70] flex flex-col items-end gap-2"
+      >
         {items.map((t) => (
           <div
             key={t.id}
-            className={`max-w-sm rounded-lg border px-4 py-2 text-sm shadow-xl ${
+            role={t.kind === 'error' ? 'alert' : 'status'}
+            title="Скрыть"
+            onClick={() => dismiss(t.id)}
+            className={`pointer-events-auto max-w-sm cursor-pointer whitespace-pre-line break-words rounded-lg border px-4 py-2 text-sm shadow-xl ${
               t.kind === 'error'
                 ? 'border-red-900 bg-red-950/95 text-red-200'
                 : t.kind === 'success'

@@ -1,3 +1,4 @@
+import { useLayoutEffect, useState } from 'react';
 import type { Entry } from '../api/types';
 import { useDismiss } from '../hooks/useDismiss';
 
@@ -6,6 +7,8 @@ export interface ContextMenuState {
   y: number;
   entry: Entry;
 }
+
+const MARGIN = 8;
 
 /** UF-10: правый клик — Открыть / Скачать / Переименовать / Удалить. */
 export function ContextMenu({
@@ -25,14 +28,22 @@ export function ContextMenu({
 }) {
   const ref = useDismiss<HTMLDivElement>(onClose);
   const { entry } = state;
+  const [pos, setPos] = useState({ left: state.x, top: state.y });
 
-  const items: { label: string; action: () => void; danger?: boolean; hidden?: boolean }[] = [
+  // не даём меню вылезти за край окна: меряем после отрисовки
+  useLayoutEffect(() => {
+    const el = ref.current;
+    if (el === null) return;
+    const { width, height } = el.getBoundingClientRect();
+    setPos({
+      left: Math.max(MARGIN, Math.min(state.x, window.innerWidth - width - MARGIN)),
+      top: Math.max(MARGIN, Math.min(state.y, window.innerHeight - height - MARGIN)),
+    });
+  }, [ref, state.x, state.y]);
+
+  const items: { label: string; action: () => void; danger?: boolean }[] = [
     { label: 'Открыть', action: () => onOpen(entry) },
-    {
-      label: 'Скачать',
-      action: () => onDownload(entry),
-      hidden: entry.kind === 'link',
-    },
+    ...(entry.kind === 'link' ? [] : [{ label: 'Скачать', action: () => onDownload(entry) }]),
     { label: 'Переименовать', action: () => onRename(entry) },
     { label: 'Удалить', action: () => onDelete(entry), danger: true },
   ];
@@ -40,28 +51,27 @@ export function ContextMenu({
   return (
     <div
       ref={ref}
-      style={{
-        left: Math.min(state.x, window.innerWidth - 230),
-        top: Math.min(state.y, window.innerHeight - 200),
-      }}
+      role="menu"
+      style={pos}
       className="fixed z-50 min-w-56 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+      onContextMenu={(e) => e.preventDefault()}
     >
-      {items
-        .filter((i) => !i.hidden)
-        .map((item) => (
-          <button
-            key={item.label}
-            className={`block w-full px-4 py-1.5 text-left text-sm transition hover:bg-zinc-800 ${
-              item.danger === true ? 'text-red-300' : 'text-zinc-200'
-            }`}
-            onClick={() => {
-              onClose();
-              item.action();
-            }}
-          >
-            {item.label}
-          </button>
-        ))}
+      {items.map((item) => (
+        <button
+          key={item.label}
+          type="button"
+          role="menuitem"
+          className={`block w-full px-4 py-1.5 text-left text-sm transition hover:bg-zinc-800 ${
+            item.danger === true ? 'text-red-300' : 'text-zinc-200'
+          }`}
+          onClick={() => {
+            onClose();
+            item.action();
+          }}
+        >
+          {item.label}
+        </button>
+      ))}
     </div>
   );
 }
