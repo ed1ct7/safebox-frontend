@@ -1,26 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import {
-  displayName,
-  isDuplicateLink,
-  isHttpUrl,
-  linkNameFromUrl,
-  makeUrlShortcut,
-  uniqueLinkFileName,
-} from './link';
+import { displayName, isHttpUrl, parseUrlList } from './link';
 import type { Entry } from '../api/types';
+import { makeEntry } from '../test/factories';
 
-const entry = (name: string, extra: Partial<Entry> = {}): Entry => ({
-  id: 1,
-  parentId: null,
-  kind: 'file',
-  name,
-  size: 40,
-  mime: '',
-  hasThumbnail: false,
-  createdAt: 0,
-  modifiedAt: 0,
-  ...extra,
-});
+const entry = (name: string, extra: Partial<Entry> = {}): Entry => makeEntry({ name, ...extra });
 
 const link = (name: string, url: string): Entry =>
   entry(name, { kind: 'link', url, domain: new URL(url).hostname });
@@ -43,75 +26,44 @@ describe('isHttpUrl', () => {
   });
 });
 
-describe('linkNameFromUrl', () => {
-  it('домен без www, если пути нет', () => {
-    expect(linkNameFromUrl('https://www.example.com/')).toBe('example.com');
-    expect(linkNameFromUrl('https://example.com?x=1')).toBe('example.com');
+describe('parseUrlList (Ctrl+V и перетаскивание, UF-20)', () => {
+  it('один адрес', () => {
+    expect(parseUrlList('https://example.com/a')).toEqual({ urls: ['https://example.com/a'], invalid: 0 });
   });
 
-  it('последний сегмент пути — подсказка', () => {
-    expect(linkNameFromUrl('https://github.com/ed1ct7/safebox-backend')).toBe(
-      'github.com — safebox-backend',
-    );
-    expect(linkNameFromUrl('https://ru.wikipedia.org/wiki/%D0%A1%D0%B5%D0%B9%D1%84')).toBe(
-      'ru.wikipedia.org — Сейф',
-    );
-    expect(linkNameFromUrl('https://site.com/docs/index.html')).toBe('site.com — index');
+  it('по строке на адрес, любые переводы строк', () => {
+    const text = 'https://a.com\r\nhttp://b.org/x\rhttps://c.net\nhttps://d.io';
+    expect(parseUrlList(text).urls).toEqual(['https://a.com', 'http://b.org/x', 'https://c.net', 'https://d.io']);
   });
 
-  it('запрещённые в именах символы вычищаются', () => {
-    expect(linkNameFromUrl('https://a.com/x%3A%2Ay%7C')).toBe('a.com — x y');
-  });
-
-  it('некорректный URL — запасное имя', () => {
-    expect(linkNameFromUrl('not a url')).toBe('Ссылка');
-  });
-});
-
-describe('isDuplicateLink', () => {
-  const existing = [link('linqtab.com — docs.url', 'https://linqtab.com/docs')];
-
-  it('та же страница (тот же URL) — дубликат', () => {
-    expect(isDuplicateLink(existing, 'https://linqtab.com/docs')).toBe(true);
-    expect(isDuplicateLink(existing, '  https://linqtab.com/docs  ')).toBe(true);
-  });
-
-  it('другая страница того же сайта — не дубликат', () => {
-    expect(isDuplicateLink(existing, 'https://linqtab.com/blog')).toBe(false);
-  });
-
-  it('файл с таким именем — не ссылка', () => {
-    expect(isDuplicateLink([entry('x.url')], 'https://linqtab.com/docs')).toBe(false);
-  });
-});
-
-describe('uniqueLinkFileName', () => {
-  it('свободное имя — как есть', () => {
-    expect(uniqueLinkFileName([], 'a.com')).toBe('a.com.url');
-  });
-
-  it('занятое (без учёта регистра) получает номер', () => {
-    const existing = [entry('A.com.url'), entry('a.com (2).url')];
-    expect(uniqueLinkFileName(existing, 'a.com')).toBe('a.com (3).url');
-  });
-});
-
-describe('makeUrlShortcut', () => {
-  it('синтезирует ярлык .url для импорта', async () => {
-    const file = makeUrlShortcut('https://www.example.com/x', 'example.com — x.url');
-    expect(file.name).toBe('example.com — x.url');
-    // jsdom File не умеет .text() — читаем через FileReader
-    const text = await new Promise<string>((resolve) => {
-      const fr = new FileReader();
-      fr.onload = () => resolve(String(fr.result));
-      fr.readAsText(file);
+  it('пробелы по краям и пустые строки игнорируются', () => {
+    expect(parseUrlList('\n  https://a.com  \n\n   \t\n https://b.com\n\n')).toEqual({
+      urls: ['https://a.com', 'https://b.com'],
+      invalid: 0,
     });
-    expect(text).toBe('[InternetShortcut]\r\nURL=https://www.example.com/x\r\n');
+  });
+
+  it('некорректные строки считаются, корректные остаются', () => {
+    const text = 'https://a.com\nпросто текст\nftp://x.org\njavascript:alert(1)\nhttps://b.com';
+    expect(parseUrlList(text)).toEqual({ urls: ['https://a.com', 'https://b.com'], invalid: 3 });
+  });
+
+  it('только некорректное - адресов нет', () => {
+    expect(parseUrlList('привет\nмир')).toEqual({ urls: [], invalid: 2 });
+  });
+
+  it('пустой текст - ни адресов, ни ошибок', () => {
+    expect(parseUrlList('')).toEqual({ urls: [], invalid: 0 });
+    expect(parseUrlList('  \n \r\n')).toEqual({ urls: [], invalid: 0 });
+  });
+
+  it('повтор той же строки уходит один раз', () => {
+    expect(parseUrlList('https://a.com\nhttps://a.com\n https://a.com ').urls).toEqual(['https://a.com']);
   });
 });
 
 describe('displayName', () => {
-  it('у ссылки скрывает .url, у файла — нет', () => {
+  it('у ссылки скрывает .url, у файла - нет', () => {
     expect(displayName(link('a.com — x.url', 'https://a.com/x'))).toBe('a.com — x');
     expect(displayName(entry('ярлык.url'))).toBe('ярлык.url');
   });

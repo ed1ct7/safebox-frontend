@@ -1,28 +1,44 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent, MouseEvent } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import { deleteEntries, downloadUrlOf, importEntries, lockSafe, renameEntry } from '../api/endpoints';
+import {
+  attachmentsZipUrlOf,
+  deleteEntries,
+  downloadUrlOf,
+  lockSafe,
+  refreshPreview,
+  updateEntry,
+} from '../api/endpoints';
 import type { PendingFile } from '../api/endpoints';
 import { ApiRequestError, errorMessage, isUnauthorized } from '../api/client';
-import { invalidateContent, listingQuery, searchQuery, statusQuery } from '../api/queries';
-import type { Entry } from '../api/types';
-import { isInteractiveTarget, isTypingTarget, triggerDownload, triggerDownloads } from '../lib/dom';
-import { filesFromDataTransfer, pastedFile } from '../lib/dnd';
-import { plural } from '../lib/format';
+import { entryQuery, invalidateContent, listingQuery, searchQuery, statusQuery } from '../api/queries';
+import type { Entry, EntryPatch } from '../api/types';
 import {
-  displayName,
-  isDuplicateLink,
-  isHttpUrl,
-  linkNameFromUrl,
-  makeUrlShortcut,
-  uniqueLinkFileName,
-} from '../lib/link';
+  copyText,
+  isInteractiveTarget,
+  isTypingTarget,
+  triggerDownload,
+  triggerDownloads,
+} from '../lib/dom';
+import { dragKind, filesFromDataTransfer, linkTextFromDataTransfer, pastedFile } from '../lib/dnd';
+import { deleteWarning, plural } from '../lib/format';
+import { displayName } from '../lib/link';
+import type { MenuAction } from '../lib/menu';
 import { isNavKey } from '../lib/selection';
+import { EMPTY_FILTER, filterSummary, isFilterActive, pruneFilterTags, searchOptionsFor } from '../lib/tagFilter';
+import type { TagFilter } from '../lib/tagFilter';
+import { pathNames } from '../lib/tags';
 import { folderAfterDelete } from '../lib/tree';
+import { useConflictPrompt } from '../hooks/useConflictPrompt';
+import { useEntryDnd } from '../hooks/useEntryDnd';
 import { useEvent, useWindowEvent } from '../hooks/useEvent';
 import { useHeartbeat } from '../hooks/useHeartbeat';
 import { useImporter } from '../hooks/useImporter';
+import { useLinks } from '../hooks/useLinks';
+import { useMoveEntries } from '../hooks/useMoveEntries';
 import { useSelection } from '../hooks/useSelection';
+import { TagCatalogProvider, useTagCatalog } from '../hooks/useTagCatalog';
+import { bumpThumbnail } from '../hooks/useThumbnailSrc';
 import { useWatchFolder } from '../hooks/useWatchFolder';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { ConfirmRequest } from './ConfirmDialog';
@@ -37,21 +53,35 @@ import { ImportPanel } from './ImportPanel';
 import { LinkConfirm } from './LinkConfirm';
 import { Lightbox } from './Lightbox';
 import { anyModalOpen } from './Modal';
+import { MoveDialog } from './MoveDialog';
+import { PropertiesPanel } from './PropertiesPanel';
+import type { PropertiesTarget } from './PropertiesPanel';
 import { SelectionBar } from './SelectionBar';
 import { StatusBar } from './StatusBar';
+import { TagsScreen } from './TagsScreen';
 import { TopBar } from './TopBar';
 import { useToast } from './Toasts';
 import { VideoModal } from './VideoModal';
 
 const SEARCH_DEBOUNCE_MS = 240; // UF-8
+const FRESH_MS = 3000; // сколько подсвечена новая ссылка
+const NO_FRESH: ReadonlySet<number> = new Set();
 
 type Viewer =
   | { kind: 'photos'; photos: Entry[]; index: number }
   | { kind: 'video'; entry: Entry }
   | { kind: 'link'; entry: Entry };
 
-/** Главное окно: дерево слева, крошки и поиск сверху, сетка карточек в центре. */
+/** Главное окно: дерево слева, крошки, поиск и фильтр сверху, сетка карточек в центре. */
 export function MainShell({ onLocked }: { onLocked: () => void }) {
+  return (
+    <TagCatalogProvider>
+      <Shell onLocked={onLocked} />
+    </TagCatalogProvider>
+  );
+}
+
+function Shell({ onLocked }: { onLocked: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
   const { idleWarningSec, markActivity, stay } = useHeartbeat();
@@ -75,6 +105,16 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
 
   const isSearch = committedQuery !== '' && searchText.trim() !== '';
 
+  // фильтр по тегам (UF-18): результаты показываем тем же видом, что и поиск
+  const catalog = useTagCatalog();
+  const [filter, setFilter] = useState<TagFilter>(EMPTY_FILTER);
+  const isFilter = isFilterActive(filter);
+  const showResults = isSearch || isFilter;
+  const [tagsOpen, setTagsOpen] = useState(false);
+
+  // тег удалили или слили - из фильтра он уходит (сервер на неизвестный id отвечает 422)
+  useEffect(() => setFilter((f) => pruneFilterTags(f, catalog)), [catalog]);
+
   // ── Данные ────────────────────────────────────────────────────────────────
 
   const status = useQuery(statusQuery);
@@ -85,29 +125,40 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
     if (status.data !== undefined && !status.data.authorized) onLocked();
   }, [status.data, onLocked]);
 
+  // «в этой папке» - within открытой папки или записи; без тегов параметров нет
+  const filterOptions = useMemo(() => searchOptionsFor(filter, folderId), [filter, folderId]);
   const listing = useQuery({
     ...listingQuery(folderId),
-    enabled: !isSearch,
+    enabled: !showResults,
     placeholderData: keepPreviousData,
   });
   const search = useQuery({
-    ...searchQuery(committedQuery),
-    enabled: isSearch,
+    ...searchQuery(isSearch ? committedQuery : '', filterOptions),
+    enabled: showResults,
     placeholderData: keepPreviousData,
   });
 
   // крошки открытой папки (для «удалили открытую папку — на родителя»)
   const folderPath = listing.isPlaceholderData ? undefined : listing.data?.path;
+  const expandPath = useMemo(() => folderPath?.map((p) => p.id), [folderPath]);
 
-  const items = useMemo<DisplayItem[]>(() => {
-    if (!isSearch) return (listing.data?.entries ?? []).map((entry) => ({ entry }));
+  const baseItems = useMemo<DisplayItem[]>(() => {
+    if (!showResults) return (listing.data?.entries ?? []).map((entry) => ({ entry }));
     return (search.data?.results ?? []).map((h) => ({
       entry: h.entry,
       caption: h.path.length > 0 ? h.path.map((p) => p.name).join(' / ') : 'Все объекты',
+      matchedIn: h.matchedIn,
     }));
-  }, [isSearch, listing.data, search.data]);
+  }, [showResults, listing.data, search.data]);
 
-  const entries = useMemo(() => items.map((d) => d.entry), [items]);
+  // только что добавленные ссылки подсвечены пару секунд (UF-20)
+  const [fresh, setFresh] = useState<ReadonlySet<number>>(NO_FRESH);
+  const items = useMemo<DisplayItem[]>(
+    () => (fresh.size === 0 ? baseItems : baseItems.map((d) => ({ ...d, fresh: fresh.has(d.entry.id) }))),
+    [baseItems, fresh],
+  );
+
+  const entries = useMemo(() => baseItems.map((d) => d.entry), [baseItems]);
   const visibleIds = useMemo(() => entries.map((e) => e.id), [entries]);
   const selection = useSelection(visibleIds);
   const { clear: clearSelection, toggle: toggleSelect } = selection; // стабильные
@@ -121,7 +172,11 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
-  const [dragging, setDragging] = useState(false);
+  const [propsOpen, setPropsOpen] = useState(false);
+  const [moveTargets, setMoveTargets] = useState<Entry[] | null>(null);
+  const [focusTagsFor, setFocusTagsFor] = useState<number | null>(null); // «Теги…» из меню: поле ввода в панели
+  const [reveal, setReveal] = useState<number | null>(null); // запись-источник тега: показать после перехода
+  const [dragging, setDragging] = useState<'files' | 'link' | null>(null); // что тащат над окном
   const dragDepth = useRef(0);
 
   const navigate = useCallback(
@@ -129,6 +184,8 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
       setFolderId(id);
       setSearchText('');
       setCommittedQuery('');
+      setFilter((f) => (isFilterActive(f) ? { ...f, tags: [] } : f)); // клик по папке сбрасывает и фильтр
+      setTagsOpen(false);
       setRenamingId(null);
       clearSelection();
     },
@@ -139,14 +196,21 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
   useEffect(() => {
     const e = listing.error;
     if (folderId !== null && e instanceof ApiRequestError && (e.status === 404 || e.status === 422)) {
-      toast('Папка больше не существует', 'info');
+      toast('Открытая папка или запись больше не существует', 'info');
       navigate(null);
     }
   }, [listing.error, folderId, navigate, toast]);
 
   // ── Импорт ────────────────────────────────────────────────────────────────
 
-  const importer = useImporter({ onBatchDone: refreshContent, onActivity: markActivity });
+  // один диалог «имя занято» на импорт и перемещение (UF-14, UF-15)
+  const conflicts = useConflictPrompt();
+
+  const importer = useImporter({
+    onBatchDone: refreshContent,
+    onActivity: markActivity,
+    askConflicts: conflicts.ask,
+  });
   const { enqueue } = importer;
 
   const importFiles = useCallback(
@@ -163,25 +227,6 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
         // файл исчез между опросом и чтением — следующий опрос разберётся
       }
     })();
-  });
-
-  const addLink = useEvent(async (url: string) => {
-    const target = folderId;
-    try {
-      const existing = (await qc.fetchQuery(listingQuery(target))).entries;
-      if (isDuplicateLink(existing, url)) {
-        toast('Эта ссылка уже есть в папке', 'info');
-        return;
-      }
-      const fileName = uniqueLinkFileName(existing, linkNameFromUrl(url));
-      // ссылки попадают в сейф контрактом: импорт ярлыка .url
-      const r = await importEntries(target, [makeUrlShortcut(url, fileName)]);
-      if (r.imported > 0) toast(`Ссылка добавлена: ${fileName.replace(/\.url$/i, '')}`, 'success');
-      else toast(r.failures[0]?.message ?? 'Ссылка не добавлена', 'error');
-      refreshContent();
-    } catch (e) {
-      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось добавить ссылку'), 'error');
-    }
   });
 
   // ── Действия ──────────────────────────────────────────────────────────────
@@ -233,7 +278,7 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
       // в режиме поиска меняем только папку «под» поиском, результаты не сбрасываем
       const back = folderPath === undefined ? undefined : folderAfterDelete(folderPath, new Set(ids));
       if (back !== undefined) {
-        if (isSearch) setFolderId(back);
+        if (showResults) setFolderId(back);
         else navigate(back);
       }
       refreshContent();
@@ -248,15 +293,12 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
     if (ids.length === 0) return;
     const doomed = entries.filter((e) => ids.includes(e.id));
     const [single] = doomed;
-    const hasFolder = doomed.some((e) => e.kind === 'folder');
     setConfirm({
       title:
         doomed.length === 1 && single !== undefined
           ? `Удалить «${displayName(single)}»?`
           : `Удалить ${plural(ids.length, 'объект', 'объекта', 'объектов')}?`,
-      message: hasFolder
-        ? 'Папки удаляются вместе со всем содержимым.\nВосстановить удалённое нельзя.'
-        : 'Восстановить удалённое нельзя.',
+      message: `${deleteWarning(doomed)}Восстановить удалённое нельзя.`,
       confirmLabel: 'Удалить',
       danger: true,
       onConfirm: () => deleteMut.mutate(ids),
@@ -268,7 +310,7 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
     const current = entries.find((e) => e.id === id);
     if (current === undefined || current.name === name) return;
     try {
-      await renameEntry(id, name);
+      await updateEntry(id, { name });
       refreshContent();
     } catch (e) {
       if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось переименовать'), 'error');
@@ -284,6 +326,171 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
       // сессия уже мертва или сервер недоступен — без пульса он сам заблокирует сейф
     }
     onLocked();
+  });
+
+  // ── Перемещение и вложения (UF-14) ────────────────────────────────────────
+
+  const moveEntriesTo = useMoveEntries({
+    askConflicts: conflicts.ask,
+    onDone: (moved) => {
+      if (moved) clearSelection();
+      refreshContent();
+    },
+  });
+
+  const dnd = useEntryDnd({ entries, selected: selection.selected, onMove: (m, p) => void moveEntriesTo(m, p) });
+
+  // ── Свойства (UF-22) ──────────────────────────────────────────────────────
+
+  // нет выделения - свойства открытой папки (или вложений записи), в поиске и корне - пусто
+  const container = showResults || listing.isPlaceholderData ? null : (listing.data?.parent ?? null);
+  const propsTarget = useMemo<PropertiesTarget>(
+    () =>
+      selectedEntries.length > 0
+        ? { entries: selectedEntries, scope: 'selection' }
+        : { entries: container === null ? [] : [container], scope: 'container' },
+    [selectedEntries, container],
+  );
+  const shownId = useRef<number | null>(null); // чьи свойства на экране: куда попадёт ошибка поля
+  shownId.current = propsTarget.entries.length === 1 ? (propsTarget.entries[0]?.id ?? null) : null;
+
+  const saveProperties = useEvent(async (id: number, patch: EntryPatch) => {
+    try {
+      await updateEntry(id, patch);
+      refreshContent();
+    } catch (e) {
+      if (isUnauthorized(e)) return; // экран входа
+      // панель уже показывает другую запись: поля с ошибкой больше нет, скажем тостом
+      if (shownId.current !== id) toast(errorMessage(e, 'Не удалось сохранить'), 'error');
+      throw e;
+    }
+  });
+
+  // id - запись, свойства которой нужны; null - те, что уже выделены (или открытая папка)
+  const openProperties = useEvent((id: number | null) => {
+    if (id !== null) selection.only(id);
+    setPropsOpen(true);
+  });
+
+  // ── Теги (UF-16, UF-17, UF-18) ────────────────────────────────────────────
+
+  // имена предков из крошек листинга и результатов: «от: <имя>» у унаследованных тегов
+  const sourceNames = useMemo(
+    () => pathNames([...(listing.data ? [listing.data.path] : []), ...(search.data?.results.map((h) => h.path) ?? [])]),
+    [listing.data, search.data],
+  );
+
+  // клик по унаследованному тегу: перейти к записи, от которой он, и выделить её
+  const openSource = useEvent(async (id: number) => {
+    try {
+      const source = await qc.fetchQuery({ ...entryQuery(id), staleTime: 0 });
+      navigate(source.parentId);
+      setReveal(source.id);
+    } catch (e) {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось открыть запись'), 'error');
+    }
+  });
+
+  const { only: selectOnly } = selection;
+  useEffect(() => {
+    if (reveal === null || showResults || listing.isPlaceholderData || listing.data === undefined) return;
+    if (listing.data.entries.some((e) => e.id === reveal)) {
+      selectOnly(reveal);
+      setPropsOpen(true);
+    }
+    setReveal(null);
+  }, [reveal, showResults, listing.isPlaceholderData, listing.data, selectOnly]);
+
+  // ── Создание ссылок (UF-20) ───────────────────────────────────────────────
+
+  const freshTimer = useRef<ReturnType<typeof setTimeout>>();
+  useEffect(() => () => clearTimeout(freshTimer.current), []);
+
+  const links = useLinks({
+    onChanged: refreshContent,
+    onCreated: (ids) => {
+      clearTimeout(freshTimer.current);
+      setFresh(new Set(ids));
+      freshTimer.current = setTimeout(() => setFresh(NO_FRESH), FRESH_MS);
+    },
+    onShow: (id) => void openSource(id), // «Уже есть» -> «Показать»
+    onActivity: markActivity,
+  });
+
+  const changeFilter = useEvent((next: TagFilter) => {
+    setFilter(next);
+    setTagsOpen(false);
+    setRenamingId(null);
+  });
+
+  // клик по тегу на экране «Теги»: фильтр по нему, весь сейф
+  const filterByTag = useEvent((tagId: number) => {
+    setFilter((f) => ({ ...f, tags: [tagId], scope: 'vault' }));
+    setSearchText('');
+    setCommittedQuery('');
+    setTagsOpen(false);
+    setRenamingId(null);
+  });
+
+  // ── Ссылки (UF-6) ─────────────────────────────────────────────────────────
+
+  const copyLink = useEvent(async (entry: Entry) => {
+    const ok = entry.url !== undefined && (await copyText(entry.url));
+    toast(ok ? 'Адрес скопирован' : 'Не удалось скопировать адрес', ok ? 'success' : 'error');
+  });
+
+  const refreshLinkPreview = useEvent(async (entry: Entry) => {
+    toast('Загружаем предпросмотр…', 'info');
+    try {
+      await refreshPreview(entry.id);
+      bumpThumbnail(entry.id);
+      toast('Предпросмотр обновлён', 'success');
+      refreshContent();
+    } catch (e) {
+      // 502: причина (сайт недоступен, нет метаданных, таймаут) - в message сервера
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось обновить предпросмотр'), 'error');
+    }
+  });
+
+  const runMenuAction = useEvent((action: MenuAction, entry: Entry) => {
+    switch (action) {
+      case 'open':
+        openEntry(entry);
+        break;
+      case 'openAttachments':
+        navigate(entry.id);
+        break;
+      case 'download':
+        downloadEntry(entry);
+        break;
+      case 'downloadAttachments': {
+        const url = attachmentsZipUrlOf(entry);
+        if (url !== null) triggerDownload(url);
+        break;
+      }
+      case 'copyLink':
+        void copyLink(entry);
+        break;
+      case 'refreshPreview':
+        void refreshLinkPreview(entry);
+        break;
+      case 'properties':
+        openProperties(entry.id);
+        break;
+      case 'rename':
+        setRenamingId(entry.id);
+        break;
+      case 'move':
+        setMoveTargets([entry]);
+        break;
+      case 'tags':
+        openProperties(entry.id);
+        setFocusTagsFor(entry.id);
+        break;
+      case 'delete':
+        requestDelete([entry.id]);
+        break;
+    }
   });
 
   // ── Карточки ──────────────────────────────────────────────────────────────
@@ -312,21 +519,27 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
       onHover: (id: number | null) => {
         hoveredId.current = id;
       },
+      onDropLink: (entry: Entry, dt: DataTransfer) =>
+        void links.addFromText(linkTextFromDataTransfer(dt), entry.id), // станет вложением записи
+      ...dnd.card,
     }),
-    [onCardClick, toggleSelect, onCardContextMenu, commitRename],
+    [onCardClick, toggleSelect, onCardContextMenu, commitRename, dnd.card, links.addFromText],
   );
 
   // ── Клавиатура ────────────────────────────────────────────────────────────
 
   useWindowEvent('keydown', (e) => {
-    if (e.defaultPrevented || isTypingTarget(e.target) || anyModalOpen() || menu !== null) return;
+    if (e.defaultPrevented || isTypingTarget(e.target) || anyModalOpen() || menu !== null || tagsOpen) return;
     const { selected } = selection;
     const [first] = selected;
     const ctrl = e.ctrlKey || e.metaKey;
 
     if (e.key === 'Escape') {
-      if (selected.size > 0) selection.clear();
+      // сверху лежит панель свойств: сначала закрываем её, потом снимаем выделение
+      if (propsOpen) setPropsOpen(false);
+      else if (selected.size > 0) selection.clear();
       else if (isSearch) setSearchText('');
+      else if (isFilter) setFilter((f) => ({ ...f, tags: [] }));
     } else if (e.key === 'F2') {
       const target = selected.size === 1 && first !== undefined ? first : hoveredId.current;
       if (target !== null) {
@@ -338,6 +551,10 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
         e.preventDefault();
         requestDelete([...selected]);
       }
+    } else if (e.key === 'Enter' && e.altKey) {
+      // Alt+Enter: свойства выделенной (или той, над которой курсор) записи
+      e.preventDefault();
+      openProperties(selected.size === 0 ? hoveredId.current : null);
     } else if (e.key === 'Enter') {
       if (isInteractiveTarget(e.target) || selected.size !== 1) return;
       const entry = entries.find((en) => en.id === first);
@@ -354,7 +571,7 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
   // ── Вставка из буфера (Ctrl+V): файлы/картинки и ссылки ──────────────────
 
   useWindowEvent('paste', (e) => {
-    if (isTypingTarget(e.target) || anyModalOpen()) return; // в полях вставка обычная
+    if (isTypingTarget(e.target) || anyModalOpen() || tagsOpen) return; // в полях вставка обычная
     const cd = e.clipboardData;
     if (cd === null) return;
     if (cd.files.length > 0) {
@@ -363,35 +580,44 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
       importFiles(Array.from(cd.files).map(pastedFile));
       return;
     }
-    const text = cd.getData('text').trim();
-    if (isHttpUrl(text)) {
-      e.preventDefault();
-      void addLink(text);
-    }
+    const text = cd.getData('text');
+    if (text.trim() === '') return;
+    e.preventDefault();
+    void links.addFromText(text, folderId); // по строке на адрес
   });
 
   // ── Drag&drop ─────────────────────────────────────────────────────────────
 
-  const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes('Files');
+  // Окно берёт файлы из проводника и ссылки/текст из браузера; перенос карточек
+  // обрабатывают их приёмники. Текст, брошенный в поле ввода, окну не нужен.
+  const droppedKind = (e: DragEvent): 'files' | 'link' | null => {
+    const kind = dragKind(e.dataTransfer.types);
+    if (kind === 'files') return kind;
+    return kind === 'link' && !isTypingTarget(e.target) && !anyModalOpen() ? kind : null;
+  };
   const dropHandlers = {
     onDragEnter: (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      const kind = droppedKind(e);
+      if (kind === null) return;
       dragDepth.current += 1;
-      setDragging(true);
+      setDragging(kind);
     },
     onDragOver: (e: DragEvent) => {
-      if (hasFiles(e)) e.preventDefault();
+      if (droppedKind(e) !== null) e.preventDefault();
     },
     onDragLeave: (e: DragEvent) => {
-      if (!hasFiles(e)) return;
+      if (droppedKind(e) === null) return;
       dragDepth.current = Math.max(0, dragDepth.current - 1);
-      if (dragDepth.current === 0) setDragging(false);
+      if (dragDepth.current === 0) setDragging(null);
     },
     onDrop: (e: DragEvent) => {
+      const kind = droppedKind(e);
+      if (kind === null) return;
       e.preventDefault();
       dragDepth.current = 0;
-      setDragging(false);
-      void filesFromDataTransfer(e.dataTransfer).then((files) => importFiles(files));
+      setDragging(null);
+      if (kind === 'files') void filesFromDataTransfer(e.dataTransfer).then((files) => importFiles(files));
+      else void links.addFromText(linkTextFromDataTransfer(e.dataTransfer), folderId);
     },
   };
 
@@ -429,20 +655,31 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
     );
   }
 
-  const contentError = (isSearch ? search.error : listing.error) ?? null;
-  const loading = isSearch ? search.isPending : listing.isPending;
+  const contentError = (showResults ? search.error : listing.error) ?? null;
+  const loading = showResults ? search.isPending : listing.isPending;
 
   return (
     <div className="flex h-screen flex-col" {...dropHandlers}>
       <TopBar
-        path={isSearch ? null : (listing.data?.path ?? [])}
+        path={showResults ? null : (listing.data?.path ?? [])}
         searchQuery={committedQuery}
+        searchActive={isSearch}
         searchText={searchText}
-        onSearchText={setSearchText}
+        onSearchText={(text) => {
+          setSearchText(text);
+          if (text !== '') setTagsOpen(false);
+        }}
+        filter={filter}
+        filterSummary={isFilter ? filterSummary(filter, catalog, folderId) : null}
+        canScopeFolder={folderId !== null}
+        onFilterChange={changeFilter}
+        tagsOpen={tagsOpen}
+        onToggleTags={() => setTagsOpen((open) => !open)}
         onNavigate={navigate}
         onImportFiles={(files) => importFiles(files)}
         onWatchFolder={() => void watch.enable()}
-        onAddLink={(url) => void addLink(url)}
+        onAddLink={(url) => void links.addLinks([url], folderId)}
+        onImportBookmarks={(file) => void links.importBookmarks(file, folderId)}
         onLock={() => void lock()}
         safe={safe}
       />
@@ -452,7 +689,12 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
           <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
             Папки
           </p>
-          <FolderTree current={isSearch ? undefined : folderId} onNavigate={navigate} />
+          <FolderTree
+            current={showResults ? undefined : folderId}
+            expandPath={expandPath}
+            onNavigate={navigate}
+            dnd={dnd.tree}
+          />
         </aside>
 
         <main
@@ -477,26 +719,41 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
             <Gallery
               items={items}
               loading={loading}
-              isSearch={isSearch}
+              isSearch={showResults}
               selection={selection.selected}
               renamingId={renamingId}
               handlers={cardHandlers}
             />
           )}
         </main>
+
+        {propsOpen && (
+          <PropertiesPanel
+            target={propsTarget}
+            onSave={saveProperties}
+            onClose={() => setPropsOpen(false)}
+            sourceNames={sourceNames}
+            onOpenSource={(id) => void openSource(id)}
+            focusTagsFor={focusTagsFor}
+            onTagsFocused={() => setFocusTagsFor(null)}
+          />
+        )}
       </div>
 
       <StatusBar
         safe={safe}
-        isSearch={isSearch}
+        isSearch={showResults}
         found={entries.length}
         watch={{ status: watch.status, folderName: watch.folderName }}
         onWatchResume={() => void watch.resume()}
         onWatchDisable={() => void watch.disable()}
       />
 
-      {selection.selected.size > 0 && (
+      {tagsOpen && <TagsScreen onBack={() => setTagsOpen(false)} onFilter={filterByTag} />}
+
+      {selection.selected.size > 0 && !tagsOpen && (
         <SelectionBar
+          entries={selectedEntries}
           count={selection.selected.size}
           canDownload={selectionUrls.length > 0}
           onDownload={() => triggerDownloads(selectionUrls)}
@@ -504,6 +761,8 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
             const [id] = selection.selected;
             if (id !== undefined) setRenamingId(id);
           }}
+          onMove={() => setMoveTargets(selectedEntries)}
+          onProperties={() => openProperties(null)}
           onDelete={() => requestDelete([...selection.selected])}
           onClear={clearSelection}
         />
@@ -515,10 +774,7 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
         <ContextMenu
           state={menu}
           onClose={() => setMenu(null)}
-          onOpen={openEntry}
-          onDownload={downloadEntry}
-          onRename={(entry) => setRenamingId(entry.id)}
-          onDelete={(entry) => requestDelete([entry.id])}
+          onAction={runMenuAction}
         />
       )}
 
@@ -538,12 +794,24 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
 
       {confirm !== null && <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />}
 
+      {moveTargets !== null && (
+        <MoveDialog
+          entries={moveTargets}
+          onMove={(parentId) => void moveEntriesTo(moveTargets, parentId)}
+          onClose={() => setMoveTargets(null)}
+        />
+      )}
+
+      {conflicts.element}
+
       {idleWarningSec !== null && <IdleWarning seconds={idleWarningSec} onStay={stay} />}
 
-      {dragging && (
+      {dragging !== null && (
         <div className="pointer-events-none fixed inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-accent/10 backdrop-blur-[2px]">
           <p className="rounded-lg bg-zinc-900/90 px-6 py-3 text-sm text-zinc-100 shadow-xl">
-            Отпустите — файлы и папки импортируются в сейф
+            {dragging === 'files'
+              ? 'Отпустите — файлы и папки импортируются в сейф'
+              : 'Отпустите — ссылка добавится в эту папку; на карточку — во вложения записи'}
           </p>
         </div>
       )}

@@ -3,18 +3,26 @@ import type { ReactNode } from 'react';
 
 export type ToastKind = 'info' | 'success' | 'error';
 
+/** Кнопка в тосте («Показать»): нажатие выполняет действие и закрывает тост. */
+export interface ToastAction {
+  label: string;
+  onClick: () => void;
+}
+
 interface ToastItem {
   id: number;
   text: string;
   kind: ToastKind;
+  action?: ToastAction;
 }
 
-type PushToast = (text: string, kind?: ToastKind) => void;
+type PushToast = (text: string, kind?: ToastKind, action?: ToastAction) => void;
 
 const ToastCtx = createContext<PushToast>(() => undefined);
 
 const TOAST_MS = 4500;
 const ERROR_TOAST_MS = 8000; // ошибку нужно успеть прочитать
+const ACTION_TOAST_MS = 8000; // и до кнопки нужно успеть дотянуться
 const MAX_TOASTS = 5;
 
 let seq = 0;
@@ -27,11 +35,12 @@ export function ToastProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const push = useCallback<PushToast>(
-    (text, kind = 'info') => {
+    (text, kind = 'info', action) => {
       seq += 1;
       const id = seq;
-      setItems((prev) => [...prev.slice(-(MAX_TOASTS - 1)), { id, text, kind }]);
-      setTimeout(() => dismiss(id), kind === 'error' ? ERROR_TOAST_MS : TOAST_MS);
+      setItems((prev) => [...prev.slice(-(MAX_TOASTS - 1)), { id, text, kind, action }]);
+      const ms = kind === 'error' ? ERROR_TOAST_MS : action === undefined ? TOAST_MS : ACTION_TOAST_MS;
+      setTimeout(() => dismiss(id), ms);
     },
     [dismiss],
   );
@@ -58,6 +67,19 @@ export function ToastProvider({ children }: { children: ReactNode }) {
             }`}
           >
             {t.text}
+            {t.action !== undefined && (
+              <button
+                type="button"
+                className="ml-3 rounded px-1 font-medium text-accent-hover underline-offset-2 hover:underline"
+                onClick={(e) => {
+                  e.stopPropagation();
+                  t.action?.onClick();
+                  dismiss(t.id);
+                }}
+              >
+                {t.action.label}
+              </button>
+            )}
           </div>
         ))}
       </div>

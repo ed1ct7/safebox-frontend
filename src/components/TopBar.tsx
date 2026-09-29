@@ -5,18 +5,29 @@ import { filesFromInput } from '../lib/dnd';
 import { isHttpUrl } from '../lib/link';
 import { supportsWatch } from '../lib/fsAccess';
 import { useDismiss } from '../hooks/useDismiss';
+import type { TagFilter } from '../lib/tagFilter';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
+import { SettingsMenu } from './SettingsMenu';
+import { TagFilterButton } from './TagFilter';
 import { useToast } from './Toasts';
 
 export interface TopBarProps {
-  path: PathItem[] | null; // null — режим поиска
+  path: PathItem[] | null; // null — результаты: поиск и/или фильтр по тегам
   searchQuery: string; // зафиксированный запрос (для крошки «Поиск: …»)
+  searchActive: boolean; // поиск по тексту идёт (есть крошка «Поиск: …»)
   searchText: string; // текущий текст поля (до дебаунса)
   onSearchText: (text: string) => void;
+  filter: TagFilter;
+  filterSummary: string | null; // текст крошки «Фильтр: …»; null — фильтр не задан
+  canScopeFolder: boolean; // открыта папка или запись: фильтр можно ограничить ею
+  onFilterChange: (filter: TagFilter) => void;
+  tagsOpen: boolean; // открыт экран «Теги»
+  onToggleTags: () => void;
   onNavigate: (id: number | null) => void;
   onImportFiles: (files: PendingFile[]) => void;
   onWatchFolder: () => void;
   onAddLink: (url: string) => void;
+  onImportBookmarks: (file: File) => void;
   onLock: () => void;
   safe: SafeInfo | undefined;
 }
@@ -31,17 +42,37 @@ export function TopBar(props: TopBarProps) {
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3">
       <div className="min-w-0 flex-1">
         {props.path === null ? (
-          <span className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
-            <span className="truncate">🔍 Поиск: «{props.searchQuery}»</span>
-            <button
-              type="button"
-              className="shrink-0 rounded px-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
-              title="Сбросить поиск (Esc)"
-              aria-label="Сбросить поиск"
-              onClick={() => props.onSearchText('')}
-            >
-              ✕
-            </button>
+          <span className="flex min-w-0 items-center gap-4 text-sm text-zinc-300">
+            {props.filterSummary !== null && (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate" title={props.filterSummary}>
+                  🏷 Фильтр: {props.filterSummary}
+                </span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded px-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+                  title="Сбросить фильтр"
+                  aria-label="Сбросить фильтр"
+                  onClick={() => props.onFilterChange({ ...props.filter, tags: [] })}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
+            {props.searchActive && (
+              <span className="flex min-w-0 items-center gap-2">
+                <span className="truncate">🔍 Поиск: «{props.searchQuery}»</span>
+                <button
+                  type="button"
+                  className="shrink-0 rounded px-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+                  title="Сбросить поиск (Esc)"
+                  aria-label="Сбросить поиск"
+                  onClick={() => props.onSearchText('')}
+                >
+                  ✕
+                </button>
+              </span>
+            )}
           </span>
         ) : (
           <Breadcrumbs path={props.path} onNavigate={props.onNavigate} />
@@ -49,8 +80,28 @@ export function TopBar(props: TopBarProps) {
       </div>
 
       <SearchInput text={props.searchText} onText={props.onSearchText} />
+      <TagFilterButton
+        filter={props.filter}
+        canScopeFolder={props.canScopeFolder}
+        onChange={props.onFilterChange}
+        className={toolButton}
+      />
       <LinkInput onAdd={props.onAddLink} />
-      <ImportMenu onImportFiles={props.onImportFiles} onWatchFolder={props.onWatchFolder} />
+      <button
+        type="button"
+        className={`${toolButton} ${props.tagsOpen ? 'border-accent text-zinc-100' : ''}`}
+        aria-pressed={props.tagsOpen}
+        title="Категории и теги: переименовать, слить, удалить"
+        onClick={props.onToggleTags}
+      >
+        🏷 Теги
+      </button>
+      <ImportMenu
+        onImportFiles={props.onImportFiles}
+        onImportBookmarks={props.onImportBookmarks}
+        onWatchFolder={props.onWatchFolder}
+      />
+      <SettingsMenu className={toolButton} />
       <SafeMenu safe={props.safe} />
       <button
         type="button"
@@ -127,7 +178,7 @@ function SearchInput({ text, onText }: { text: string; onText: (t: string) => vo
   );
 }
 
-/** Добавление ссылки без окна: вставьте/наберите URL и нажмите Enter. */
+/** Поле «Ссылка» (UF-20): вставьте адрес и нажмите Enter - ссылка создана, поле пусто. Без окон. */
 function LinkInput({ onAdd }: { onAdd: (url: string) => void }) {
   const [value, setValue] = useState('');
   const toast = useToast();
@@ -135,7 +186,7 @@ function LinkInput({ onAdd }: { onAdd: (url: string) => void }) {
     <input
       value={value}
       placeholder="Ссылка ↵"
-      aria-label="Добавить ссылку"
+      aria-label="Ссылка"
       spellCheck={false}
       title="Вставьте ссылку и нажмите Enter — или просто Ctrl+V в любом месте окна"
       onChange={(e) => setValue(e.target.value)}
@@ -150,7 +201,7 @@ function LinkInput({ onAdd }: { onAdd: (url: string) => void }) {
         const v = value.trim();
         if (v === '') return;
         if (!isHttpUrl(v)) {
-          toast('Это не похоже на ссылку (нужно http:// или https://)', 'error');
+          toast('Это не ссылка', 'error');
           return;
         }
         onAdd(v);
@@ -163,15 +214,18 @@ function LinkInput({ onAdd }: { onAdd: (url: string) => void }) {
 
 function ImportMenu({
   onImportFiles,
+  onImportBookmarks,
   onWatchFolder,
 }: {
   onImportFiles: (files: PendingFile[]) => void;
+  onImportBookmarks: (file: File) => void;
   onWatchFolder: () => void;
 }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss<HTMLDivElement>(() => setOpen(false), open);
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
+  const bookmarksRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     // React не знает атрибут webkitdirectory — вешаем руками
@@ -186,6 +240,12 @@ function ImportMenu({
   const onPicked = (input: HTMLInputElement) => {
     onImportFiles(filesFromInput(input));
     input.value = '';
+  };
+
+  const onBookmarksPicked = (input: HTMLInputElement) => {
+    const file = input.files?.[0];
+    input.value = '';
+    if (file !== undefined) onImportBookmarks(file);
   };
 
   return (
@@ -209,6 +269,15 @@ function ImportMenu({
           </button>
           <button type="button" role="menuitem" className={menuItem} onClick={() => pick(folderRef.current)}>
             Папку целиком…
+          </button>
+          <button
+            type="button"
+            role="menuitem"
+            className={`${menuItem} border-t border-zinc-800`}
+            title="HTML-файл, экспортированный из Chrome, Edge или Firefox: папки закладок станут папками"
+            onClick={() => pick(bookmarksRef.current)}
+          >
+            Закладки браузера…
           </button>
           {supportsWatch() && (
             <button
@@ -234,6 +303,14 @@ function ImportMenu({
         onChange={(e) => onPicked(e.currentTarget)}
       />
       <input ref={folderRef} type="file" className="hidden" onChange={(e) => onPicked(e.currentTarget)} />
+      <input
+        ref={bookmarksRef}
+        type="file"
+        accept=".html,.htm,text/html"
+        aria-label="Файл закладок"
+        className="hidden"
+        onChange={(e) => onBookmarksPicked(e.currentTarget)}
+      />
     </div>
   );
 }

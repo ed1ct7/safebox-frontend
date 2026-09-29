@@ -1,4 +1,3 @@
-import type { PendingFile } from '../api/endpoints';
 import type { Entry } from '../api/types';
 
 export function isHttpUrl(text: string): boolean {
@@ -12,65 +11,25 @@ export function isHttpUrl(text: string): boolean {
   }
 }
 
-// символы, запрещённые в именах записей (rules.ts), и управляющие
-const UNSAFE_NAME_CHARS = /[\\/:*?"<>|\u0000-\u001f]+/g;
-const MAX_HINT = 60;
-
 /**
- * Имя ссылки: домен без www и «подсказка» из последнего сегмента пути —
- * «github.com — safebox-backend». Просто домен у двух ссылок одного сайта
- * давал бы одинаковые имена.
+ * Адреса из текста (буфер обмена, перетаскивание): по строке на адрес, пробелы и
+ * пустые строки не в счёт. Корректные http/https - в urls без повторов, остальные -
+ * счётчиком invalid (о них скажет тост).
  */
-export function linkNameFromUrl(text: string): string {
-  let u: URL;
-  try {
-    u = new URL(text.trim());
-  } catch {
-    return 'Ссылка';
+export function parseUrlList(text: string): { urls: string[]; invalid: number } {
+  const urls: string[] = [];
+  const seen = new Set<string>();
+  let invalid = 0;
+  for (const line of text.split(/\r\n|\r|\n/)) {
+    const value = line.trim();
+    if (value === '') continue;
+    if (!isHttpUrl(value)) invalid += 1;
+    else if (!seen.has(value)) {
+      seen.add(value);
+      urls.push(value);
+    }
   }
-  const host = u.hostname.replace(/^www\./i, '').slice(0, 100);
-  const segment = u.pathname.split('/').filter((s) => s !== '').pop() ?? '';
-  let hint = segment;
-  try {
-    hint = decodeURIComponent(segment);
-  } catch {
-    // битый %-код — оставляем как есть
-  }
-  hint = hint
-    .replace(/\.(html?|php|aspx?)$/i, '')
-    .replace(UNSAFE_NAME_CHARS, ' ')
-    .replace(/\s+/g, ' ')
-    .trim()
-    .slice(0, MAX_HINT)
-    .trim();
-  return hint === '' ? host : `${host} — ${hint}`;
-}
-
-/** Дубликат ссылки — та же страница: точное совпадение URL среди ссылок папки. */
-export function isDuplicateLink(existing: Entry[], url: string): boolean {
-  const target = url.trim();
-  return existing.some((e) => e.kind === 'link' && e.url === target);
-}
-
-/**
- * Свободное имя ярлыка в папке: сервер считает дубликатом файл с тем же именем
- * (без учёта регистра) и тем же размером, а ярлыки разных страниц одного сайта
- * легко совпадают по обоим. Поэтому занятое имя получает суффикс « (2)», « (3)»…
- */
-export function uniqueLinkFileName(existing: Entry[], baseName: string): string {
-  const taken = new Set(existing.map((e) => e.name.toLocaleLowerCase()));
-  let name = `${baseName}.url`;
-  for (let n = 2; taken.has(name.toLocaleLowerCase()); n += 1) name = `${baseName} (${n}).url`;
-  return name;
-}
-
-/**
- * Ссылки попадают в сейф контрактом через импорт ярлыка Windows .url
- * (POST /api/v1/import распознаёт [InternetShortcut] с http(s)-адресом как link).
- */
-export function makeUrlShortcut(url: string, fileName: string): PendingFile {
-  const text = `[InternetShortcut]\r\nURL=${url.trim()}\r\n`;
-  return new File([text], fileName, { type: 'application/octet-stream' }) as PendingFile;
+  return { urls, invalid };
 }
 
 /** Имя ссылки на карточке: «.url» — техническая деталь хранения. */
