@@ -1,476 +1,424 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import type { DragEvent, MouseEvent } from 'react';
 import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
-import type { MouseEvent } from 'react';
-import {
-  deleteEntries,
-  deleteEntry,
-  getSafeStatus,
-  importEntries,
-  listEntries,
-  lockSafe,
-  mediaUrl,
-  renameEntry,
-  searchEntries,
-} from '../api/endpoints';
+import { deleteEntries, downloadUrlOf, importEntries, lockSafe, renameEntry } from '../api/endpoints';
 import type { PendingFile } from '../api/endpoints';
-import type { Entry, PathItem } from '../api/types';
-import { isTypingTarget, triggerDownload } from '../lib/dom';
+import { ApiRequestError, errorMessage, isUnauthorized } from '../api/client';
+import { invalidateContent, listingQuery, searchQuery, statusQuery } from '../api/queries';
+import type { Entry } from '../api/types';
+import { isInteractiveTarget, isTypingTarget, triggerDownload, triggerDownloads } from '../lib/dom';
 import { filesFromDataTransfer, pastedFile } from '../lib/dnd';
-import { existingEntries, filterDuplicates, isDuplicateLink } from '../lib/duplicates';
-import { isHttpUrl, linkNameFromUrl, makeUrlShortcut } from '../lib/link';
 import { plural } from '../lib/format';
-import { markActivity, useHeartbeat } from '../hooks/useHeartbeat';
+import {
+  displayName,
+  isDuplicateLink,
+  isHttpUrl,
+  linkNameFromUrl,
+  makeUrlShortcut,
+  uniqueLinkFileName,
+} from '../lib/link';
+import { isNavKey } from '../lib/selection';
+import { folderAfterDelete } from '../lib/tree';
+import { useEvent, useWindowEvent } from '../hooks/useEvent';
+import { useHeartbeat } from '../hooks/useHeartbeat';
+import { useImporter } from '../hooks/useImporter';
+import { useSelection } from '../hooks/useSelection';
 import { useWatchFolder } from '../hooks/useWatchFolder';
-import { TopBar } from './TopBar';
+import { ConfirmDialog } from './ConfirmDialog';
+import type { ConfirmRequest } from './ConfirmDialog';
+import { ContextMenu } from './ContextMenu';
+import type { ContextMenuState } from './ContextMenu';
+import type { EntryCardHandlers } from './EntryCard';
 import { FolderTree } from './FolderTree';
 import { Gallery } from './Gallery';
 import type { DisplayItem } from './Gallery';
-import { SelectionBar } from './SelectionBar';
-import { ContextMenu } from './ContextMenu';
-import type { ContextMenuState } from './ContextMenu';
-import { Lightbox } from './Lightbox';
-import { VideoModal } from './VideoModal';
-import { LinkConfirm } from './LinkConfirm';
 import { IdleWarning } from './IdleWarning';
 import { ImportPanel } from './ImportPanel';
+import { LinkConfirm } from './LinkConfirm';
+import { Lightbox } from './Lightbox';
+import { anyModalOpen } from './Modal';
+import { SelectionBar } from './SelectionBar';
 import { StatusBar } from './StatusBar';
+import { TopBar } from './TopBar';
 import { useToast } from './Toasts';
+import { VideoModal } from './VideoModal';
 
-type View = { type: 'folder'; id: number | null } | { type: 'search'; q: string };
+const SEARCH_DEBOUNCE_MS = 240; // UF-8
 
 type Viewer =
   | { kind: 'photos'; photos: Entry[]; index: number }
   | { kind: 'video'; entry: Entry }
   | { kind: 'link'; entry: Entry };
 
-interface ImportState {
-  loaded: number;
-  total: number;
-  count: number;
-}
-
+/** Главное окно: дерево слева, крошки и поиск сверху, сетка карточек в центре. */
 export function MainShell({ onLocked }: { onLocked: () => void }) {
   const qc = useQueryClient();
   const toast = useToast();
-  const { activityRef, idleRemainingSec, refresh } = useHeartbeat();
+  const { idleWarningSec, markActivity, stay } = useHeartbeat();
 
-  const [view, setView] = useState<View>({ type: 'folder', id: null });
-  const lastFolderRef = useRef<number | null>(null);
+  // ── Навигация и поиск ─────────────────────────────────────────────────────
+
+  const [folderId, setFolderId] = useState<number | null>(null);
   const [searchText, setSearchText] = useState('');
-  const [selection, setSelection] = useState<Set<number>>(new Set());
-  const [anchorId, setAnchorId] = useState<number | null>(null);
-  const [renamingId, setRenamingId] = useState<number | null>(null);
-  const [hoveredId, setHoveredId] = useState<number | null>(null);
-  const [menu, setMenu] = useState<ContextMenuState | null>(null);
-  const [viewer, setViewer] = useState<Viewer | null>(null);
-  const [importState, setImportState] = useState<ImportState | null>(null);
-  const [dragging, setDragging] = useState(false);
-  const dragDepth = useRef(0);
+  const [committedQuery, setCommittedQuery] = useState('');
 
-  // ── Данные ────────────────────────────────────────────────────────────────
-
-  const statusQuery = useQuery({ queryKey: ['status'], queryFn: getSafeStatus });
-  const safe = statusQuery.data?.safe;
-
-  useEffect(() => {
-    // токен умер (блокировка в другой вкладке и т.п.) — на экран входа
-    if (statusQuery.data !== undefined && !statusQuery.data.authorized) onLocked();
-  }, [statusQuery.data, onLocked]);
-
-  const activeFolderId = view.type === 'folder' ? view.id : lastFolderRef.current;
-  const listingQuery = useQuery({
-    queryKey: ['listing', activeFolderId],
-    queryFn: () => listEntries(activeFolderId),
-    enabled: view.type === 'folder',
-    placeholderData: keepPreviousData,
-  });
-  const searchQuery = useQuery({
-    queryKey: ['search', view.type === 'search' ? view.q : ''],
-    queryFn: () => searchEntries(view.type === 'search' ? view.q : ''),
-    enabled: view.type === 'search',
-    placeholderData: keepPreviousData,
-  });
-
-  const displayItems = useMemo<DisplayItem[]>(() => {
-    if (view.type === 'folder') {
-      return (listingQuery.data?.entries ?? []).map((entry) => ({ entry }));
-    }
-    return (searchQuery.data?.results ?? []).map((h) => ({
-      entry: h.entry,
-      caption: h.path.length > 0 ? h.path.map((p) => p.name).join(' / ') : undefined,
-    }));
-  }, [view.type, listingQuery.data, searchQuery.data]);
-
-  const entries = useMemo(() => displayItems.map((d) => d.entry), [displayItems]);
-
-  const invalidateContent = useCallback(() => {
-    void qc.invalidateQueries({ queryKey: ['listing'] });
-    void qc.invalidateQueries({ queryKey: ['folders'] });
-    void qc.invalidateQueries({ queryKey: ['status'] });
-    void qc.invalidateQueries({ queryKey: ['search'] });
-  }, [qc]);
-
-  // ── Навигация и выделение ────────────────────────────────────────────────
-
-  const clearSelection = useCallback(() => {
-    setSelection(new Set());
-    setAnchorId(null);
-  }, []);
-
-  const navigate = useCallback(
-    (id: number | null) => {
-      markActivity(activityRef);
-      lastFolderRef.current = id;
-      setSearchText('');
-      setView({ type: 'folder', id });
-      clearSelection();
-    },
-    [activityRef, clearSelection],
-  );
-
-  // дебаунс поиска ~240 мс (UF-8); пустой запрос возвращает в папку
+  // дебаунс ~240 мс; пустой запрос возвращает в папку сразу
   useEffect(() => {
     const q = searchText.trim();
     if (q === '') {
-      setView({ type: 'folder', id: lastFolderRef.current });
+      setCommittedQuery('');
       return;
     }
-    const t = setTimeout(() => setView({ type: 'search', q }), 240);
+    const t = setTimeout(() => setCommittedQuery(q), SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(t);
   }, [searchText]);
 
-  const toggleSelect = useCallback((id: number) => {
-    setSelection((prev) => {
-      const next = new Set(prev);
-      if (next.has(id)) next.delete(id);
-      else next.add(id);
-      return next;
-    });
-    setAnchorId(id);
-  }, []);
+  const isSearch = committedQuery !== '' && searchText.trim() !== '';
 
-  const rangeSelect = useCallback(
-    (id: number) => {
-      const ids = entries.map((e) => e.id);
-      const a = ids.indexOf(anchorId ?? id);
-      const b = ids.indexOf(id);
-      if (a === -1 || b === -1) {
-        setSelection(new Set([id]));
-      } else {
-        const [lo, hi] = a < b ? [a, b] : [b, a];
-        setSelection(new Set(ids.slice(lo, hi + 1)));
-      }
-      setAnchorId(id);
-    },
-    [entries, anchorId],
-  );
+  // ── Данные ────────────────────────────────────────────────────────────────
 
-  // ── Действия ──────────────────────────────────────────────────────────────
+  const status = useQuery(statusQuery);
+  const safe = status.data?.safe;
 
-  const openEntry = useCallback(
-    (entry: Entry) => {
-      markActivity(activityRef);
-      switch (entry.kind) {
-        case 'folder':
-          navigate(entry.id);
-          break;
-        case 'photo': {
-          const photos = entries.filter((e) => e.kind === 'photo');
-          const index = photos.findIndex((e) => e.id === entry.id);
-          setViewer({ kind: 'photos', photos, index: Math.max(0, index) });
-          break;
-        }
-        case 'video':
-          setViewer({ kind: 'video', entry });
-          break;
-        case 'link':
-          setViewer({ kind: 'link', entry });
-          break;
-        default:
-          triggerDownload(mediaUrl(entry.id, 'download'));
-      }
-    },
-    [activityRef, entries, navigate],
-  );
+  useEffect(() => {
+    // токен умер (блокировка в другой вкладке и т.п.) — на экран входа
+    if (status.data !== undefined && !status.data.authorized) onLocked();
+  }, [status.data, onLocked]);
 
-  const downloadEntry = useCallback((entry: Entry) => {
-    if (entry.kind === 'link') return;
-    triggerDownload(mediaUrl(entry.id, entry.kind === 'folder' ? 'zip' : 'download'));
-  }, []);
-
-  const downloadSelection = useCallback(() => {
-    for (const e of entries) {
-      if (selection.has(e.id) && e.kind !== 'link') downloadEntry(e);
-    }
-  }, [entries, selection, downloadEntry]);
-
-  const deleteMut = useMutation({
-    mutationFn: async (ids: number[]) => {
-      if (ids.length === 1) {
-        const [id] = ids;
-        if (id === undefined) throw new Error('Нечего удалять');
-        return deleteEntry(id);
-      }
-      return deleteEntries(ids);
-    },
-    onSuccess: invalidateContent,
-    onError: (e: Error) => toast(e.message, 'error'),
+  const listing = useQuery({
+    ...listingQuery(folderId),
+    enabled: !isSearch,
+    placeholderData: keepPreviousData,
+  });
+  const search = useQuery({
+    ...searchQuery(committedQuery),
+    enabled: isSearch,
+    placeholderData: keepPreviousData,
   });
 
-  const confirmDelete = useCallback(
-    (ids: number[]) => {
-      if (ids.length === 0) return;
-      markActivity(activityRef);
-      const hasFolder = entries.some((e) => ids.includes(e.id) && e.kind === 'folder');
-      const msg =
-        `Удалить ${plural(ids.length, 'объект', 'объекта', 'объектов')}?` +
-        (hasFolder ? '\nПапки удаляются вместе со всем содержимым.' : '');
-      if (!window.confirm(msg)) return;
-      const currentId = view.type === 'folder' ? view.id : null;
-      const removingCurrent = currentId !== null && ids.includes(currentId);
-      const parentId = listingQuery.data?.folder?.parentId ?? null;
-      deleteMut.mutate(ids, {
-        onSuccess: (r) => {
-          toast(`Удалено: ${r.removed}`, 'success');
-          clearSelection();
-          // открытая папка удалена — возвращаемся на родителя (UF-10)
-          if (removingCurrent) navigate(parentId);
-        },
-      });
-    },
-    [activityRef, entries, view, listingQuery.data, deleteMut, toast, clearSelection, navigate],
-  );
+  // крошки открытой папки (для «удалили открытую папку — на родителя»)
+  const folderPath = listing.isPlaceholderData ? undefined : listing.data?.path;
 
-  const commitRename = useCallback(
-    async (id: number, name: string) => {
+  const items = useMemo<DisplayItem[]>(() => {
+    if (!isSearch) return (listing.data?.entries ?? []).map((entry) => ({ entry }));
+    return (search.data?.results ?? []).map((h) => ({
+      entry: h.entry,
+      caption: h.path.length > 0 ? h.path.map((p) => p.name).join(' / ') : 'Все объекты',
+    }));
+  }, [isSearch, listing.data, search.data]);
+
+  const entries = useMemo(() => items.map((d) => d.entry), [items]);
+  const visibleIds = useMemo(() => entries.map((e) => e.id), [entries]);
+  const selection = useSelection(visibleIds);
+  const { clear: clearSelection, toggle: toggleSelect } = selection; // стабильные
+
+  const refreshContent = useCallback(() => invalidateContent(qc), [qc]);
+
+  // ── Состояние окна ────────────────────────────────────────────────────────
+
+  const [renamingId, setRenamingId] = useState<number | null>(null);
+  const hoveredId = useRef<number | null>(null); // только для F2 — без перерисовок
+  const [menu, setMenu] = useState<ContextMenuState | null>(null);
+  const [viewer, setViewer] = useState<Viewer | null>(null);
+  const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
+  const [dragging, setDragging] = useState(false);
+  const dragDepth = useRef(0);
+
+  const navigate = useCallback(
+    (id: number | null) => {
+      setFolderId(id);
+      setSearchText('');
+      setCommittedQuery('');
       setRenamingId(null);
-      markActivity(activityRef);
-      const current = entries.find((e) => e.id === id);
-      if (current === undefined || current.name === name) return;
-      try {
-        await renameEntry(id, name);
-        invalidateContent();
-      } catch (e) {
-        toast(e instanceof Error ? e.message : 'Ошибка переименования', 'error');
-      }
+      clearSelection();
     },
-    [activityRef, entries, invalidateContent, toast],
+    [clearSelection],
   );
 
-  const addLink = useCallback(
-    async (url: string) => {
-      markActivity(activityRef);
-      const name = linkNameFromUrl(url);
-      const existing = await existingEntries(qc, lastFolderRef.current);
-      if (isDuplicateLink(existing, url)) {
-        toast(`Ссылка уже есть: ${linkNameFromUrl(url)}`, 'info');
-        return;
-      }
-      try {
-        // ссылки попадают в сейф контрактом: импорт ярлыка .url (docs/api.md §7)
-        const r = await importEntries(lastFolderRef.current, [makeUrlShortcut(url)]);
-        if (r.imported > 0) toast(`Ссылка добавлена: ${name}`, 'success');
-        else toast(r.failures[0]?.message ?? 'Ссылка не добавлена', 'error');
-        invalidateContent();
-      } catch (e) {
-        toast(e instanceof Error ? e.message : 'Ошибка добавления ссылки', 'error');
-      }
-    },
-    [activityRef, qc, invalidateContent, toast],
+  // открытую папку удалили в другой вкладке/через поиск — в корень
+  useEffect(() => {
+    const e = listing.error;
+    if (folderId !== null && e instanceof ApiRequestError && (e.status === 404 || e.status === 422)) {
+      toast('Папка больше не существует', 'info');
+      navigate(null);
+    }
+  }, [listing.error, folderId, navigate, toast]);
+
+  // ── Импорт ────────────────────────────────────────────────────────────────
+
+  const importer = useImporter({ onBatchDone: refreshContent, onActivity: markActivity });
+  const { enqueue } = importer;
+
+  const importFiles = useCallback(
+    (files: PendingFile[], source?: string) => enqueue(files, folderId, source),
+    [enqueue, folderId],
   );
 
-  const runImport = useCallback(
-    async (files: PendingFile[], source?: string) => {
-      if (files.length === 0) return;
-      markActivity(activityRef);
-      // дубликаты (то же имя + размер в целевой папке) не доходят до сервера
-      const folderId = lastFolderRef.current;
-      const existing = await existingEntries(qc, folderId);
-      const { files: unique, skipped } = filterDuplicates(files, existing);
-      const from = source === undefined ? '' : ` из «${source}»`;
-      if (unique.length === 0) {
-        toast(`Уже в сейфе${from}: ${plural(skipped, 'дубликат', 'дубликата', 'дубликатов')}`, 'info');
-        return;
-      }
-      setImportState({ loaded: 0, total: 0, count: unique.length });
-      try {
-        const r = await importEntries(folderId, unique, (loaded, total) => {
-          setImportState({ loaded, total, count: unique.length });
-          activityRef.current = true; // долгое действие = присутствие
-        });
-        const parts = [`Импортировано${from}: ${r.imported}`];
-        if (r.failed > 0) parts.push(`ошибок: ${r.failed}`);
-        if (skipped > 0) parts.push(`дубликатов пропущено: ${skipped}`);
-        toast(parts.join(', '), r.failed > 0 ? 'error' : 'success');
-        invalidateContent();
-      } catch (e) {
-        toast(e instanceof Error ? e.message : 'Ошибка импорта', 'error');
-      } finally {
-        setImportState(null);
-      }
-    },
-    [activityRef, qc, invalidateContent, toast],
-  );
-
-  // наблюдение за папкой загрузок: новые файлы — тем же путём, что и ручной импорт
-  const watch = useWatchFolder((entries, folderName) => {
-    markActivity(activityRef);
+  const watch = useWatchFolder((found, folderName) => {
     void (async () => {
       try {
-        const files = await Promise.all(entries.map((e) => e.getFile()));
-        await runImport(files, folderName === '' ? undefined : folderName);
+        const files = await Promise.all(found.map((e) => e.getFile()));
+        importFiles(files, folderName);
       } catch {
-        // файл исчез между опросом и чтением
+        // файл исчез между опросом и чтением — следующий опрос разберётся
       }
     })();
   });
 
-  const lock = useCallback(async () => {
+  const addLink = useEvent(async (url: string) => {
+    const target = folderId;
+    try {
+      const existing = (await qc.fetchQuery(listingQuery(target))).entries;
+      if (isDuplicateLink(existing, url)) {
+        toast('Эта ссылка уже есть в папке', 'info');
+        return;
+      }
+      const fileName = uniqueLinkFileName(existing, linkNameFromUrl(url));
+      // ссылки попадают в сейф контрактом: импорт ярлыка .url
+      const r = await importEntries(target, [makeUrlShortcut(url, fileName)]);
+      if (r.imported > 0) toast(`Ссылка добавлена: ${fileName.replace(/\.url$/i, '')}`, 'success');
+      else toast(r.failures[0]?.message ?? 'Ссылка не добавлена', 'error');
+      refreshContent();
+    } catch (e) {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось добавить ссылку'), 'error');
+    }
+  });
+
+  // ── Действия ──────────────────────────────────────────────────────────────
+
+  const openEntry = useEvent((entry: Entry) => {
+    switch (entry.kind) {
+      case 'folder':
+        navigate(entry.id);
+        break;
+      case 'photo': {
+        const photos = entries.filter((e) => e.kind === 'photo');
+        const index = Math.max(0, photos.findIndex((e) => e.id === entry.id));
+        setViewer({ kind: 'photos', photos, index });
+        break;
+      }
+      case 'video':
+        setViewer({ kind: 'video', entry });
+        break;
+      case 'link':
+        setViewer({ kind: 'link', entry });
+        break;
+      default: {
+        const url = downloadUrlOf(entry);
+        if (url !== null) triggerDownload(url);
+      }
+    }
+  });
+
+  const downloadEntry = useCallback((entry: Entry) => {
+    const url = downloadUrlOf(entry);
+    if (url !== null) triggerDownload(url);
+  }, []);
+
+  const selectedEntries = useMemo(
+    () => entries.filter((e) => selection.selected.has(e.id)),
+    [entries, selection.selected],
+  );
+  const selectionUrls = useMemo(
+    () => selectedEntries.map(downloadUrlOf).filter((u): u is string => u !== null),
+    [selectedEntries],
+  );
+
+  const deleteMut = useMutation({
+    mutationFn: (ids: number[]) => deleteEntries(ids),
+    onSuccess: (r, ids) => {
+      toast(`Удалено: ${plural(r.removed, 'объект', 'объекта', 'объектов')}`, 'success');
+      clearSelection();
+      // UF-10: удалённая открытая папка (или её предок) возвращает на родителя;
+      // в режиме поиска меняем только папку «под» поиском, результаты не сбрасываем
+      const back = folderPath === undefined ? undefined : folderAfterDelete(folderPath, new Set(ids));
+      if (back !== undefined) {
+        if (isSearch) setFolderId(back);
+        else navigate(back);
+      }
+      refreshContent();
+    },
+    onError: (e) => {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось удалить'), 'error');
+      refreshContent(); // часть могла удалиться до ошибки
+    },
+  });
+
+  const requestDelete = useEvent((ids: number[]) => {
+    if (ids.length === 0) return;
+    const doomed = entries.filter((e) => ids.includes(e.id));
+    const [single] = doomed;
+    const hasFolder = doomed.some((e) => e.kind === 'folder');
+    setConfirm({
+      title:
+        doomed.length === 1 && single !== undefined
+          ? `Удалить «${displayName(single)}»?`
+          : `Удалить ${plural(ids.length, 'объект', 'объекта', 'объектов')}?`,
+      message: hasFolder
+        ? 'Папки удаляются вместе со всем содержимым.\nВосстановить удалённое нельзя.'
+        : 'Восстановить удалённое нельзя.',
+      confirmLabel: 'Удалить',
+      danger: true,
+      onConfirm: () => deleteMut.mutate(ids),
+    });
+  });
+
+  const commitRename = useEvent(async (id: number, name: string) => {
+    setRenamingId(null);
+    const current = entries.find((e) => e.id === id);
+    if (current === undefined || current.name === name) return;
+    try {
+      await renameEntry(id, name);
+      refreshContent();
+    } catch (e) {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось переименовать'), 'error');
+    }
+  });
+
+  const lock = useEvent(async () => {
+    setViewer(null); // закрыть видео: его Range-поток держит аренду сессии
+    importer.cancelAll();
     try {
       await lockSafe();
     } catch {
-      // даже при ошибке считаем сессию завершенной — экран входа покажет статус
+      // сессия уже мертва или сервер недоступен — без пульса он сам заблокирует сейф
     }
     onLocked();
-  }, [onLocked]);
+  });
 
-  // ── События карточек ──────────────────────────────────────────────────────
+  // ── Карточки ──────────────────────────────────────────────────────────────
 
-  const onCardClick = useCallback(
-    (e: MouseEvent, entry: Entry) => {
-      markActivity(activityRef);
-      if (e.ctrlKey || e.metaKey) toggleSelect(entry.id);
-      else if (e.shiftKey) rangeSelect(entry.id);
-      else openEntry(entry);
-    },
-    [activityRef, toggleSelect, rangeSelect, openEntry],
-  );
+  const onCardClick = useEvent((e: MouseEvent, entry: Entry) => {
+    if (e.ctrlKey || e.metaKey) selection.toggle(entry.id);
+    else if (e.shiftKey) selection.extendTo(entry.id);
+    else openEntry(entry);
+  });
 
-  const onContextMenu = useCallback(
-    (e: MouseEvent, entry: Entry) => {
-      e.preventDefault();
-      markActivity(activityRef);
-      if (!selection.has(entry.id)) setSelection(new Set([entry.id]));
-      setAnchorId(entry.id);
-      setMenu({ x: e.clientX, y: e.clientY, entry });
-    },
-    [activityRef, selection],
+  const onCardContextMenu = useEvent((e: MouseEvent, entry: Entry) => {
+    e.preventDefault();
+    if (!selection.selected.has(entry.id)) selection.only(entry.id);
+    setMenu({ x: e.clientX, y: e.clientY, entry });
+  });
+
+  // стабильный объект: memo-карточки перерисовываются только при смене своих props
+  const cardHandlers = useMemo<EntryCardHandlers>(
+    () => ({
+      onClick: onCardClick,
+      onToggleSelect: toggleSelect,
+      onContextMenu: onCardContextMenu,
+      onRenameStart: setRenamingId,
+      onRenameCommit: (id: number, name: string) => void commitRename(id, name),
+      onRenameCancel: () => setRenamingId(null),
+      onHover: (id: number | null) => {
+        hoveredId.current = id;
+      },
+    }),
+    [onCardClick, toggleSelect, onCardContextMenu, commitRename],
   );
 
   // ── Клавиатура ────────────────────────────────────────────────────────────
 
-  useEffect(() => {
-    const onKey = (e: KeyboardEvent) => {
-      if (isTypingTarget(e.target)) return;
+  useWindowEvent('keydown', (e) => {
+    if (e.defaultPrevented || isTypingTarget(e.target) || anyModalOpen() || menu !== null) return;
+    const { selected } = selection;
+    const [first] = selected;
+    const ctrl = e.ctrlKey || e.metaKey;
 
-      if (e.key === 'Escape') {
-        if (viewer !== null) setViewer(null);
-        else if (renamingId !== null) setRenamingId(null);
-        else if (menu !== null) setMenu(null);
-        else if (selection.size > 0) clearSelection();
-        else if (view.type === 'search') setSearchText('');
-        return;
-      }
-
-      if (viewer !== null) return; // ←/→ внутри лайтбокса обрабатывает он сам
-
-      if (e.key === 'F2') {
-        const target = selection.size === 1 ? ([...selection][0] ?? null) : hoveredId;
-        if (target !== null) {
-          e.preventDefault();
-          setRenamingId(target);
-        }
-      } else if (e.key === 'Delete') {
-        if (selection.size > 0) {
-          e.preventDefault();
-          confirmDelete([...selection]);
-        }
-      } else if (e.key === 'Enter' && e.target === document.body) {
-        if (selection.size === 1) {
-          const id = [...selection][0];
-          const entry = id === undefined ? undefined : entries.find((en) => en.id === id);
-          if (entry !== undefined) openEntry(entry);
-        }
-      } else if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === 'a') {
+    if (e.key === 'Escape') {
+      if (selected.size > 0) selection.clear();
+      else if (isSearch) setSearchText('');
+    } else if (e.key === 'F2') {
+      const target = selected.size === 1 && first !== undefined ? first : hoveredId.current;
+      if (target !== null) {
         e.preventDefault();
-        setSelection(new Set(entries.map((en) => en.id)));
-      } else if (e.key === 'ArrowLeft' || e.key === 'ArrowRight' || e.key === 'Home' || e.key === 'End') {
-        const ids = entries.map((en) => en.id);
-        if (ids.length === 0) return;
-        e.preventDefault();
-        let idx: number;
-        const only = [...selection][0];
-        if (selection.size !== 1 || only === undefined) {
-          idx = e.key === 'ArrowRight' || e.key === 'Home' ? 0 : ids.length - 1;
-        } else {
-          const cur = ids.indexOf(only);
-          if (e.key === 'Home') idx = 0;
-          else if (e.key === 'End') idx = ids.length - 1;
-          else if (e.key === 'ArrowRight') idx = Math.min(cur + 1, ids.length - 1);
-          else idx = Math.max(cur - 1, 0);
-        }
-        const target = ids[idx];
-        if (target !== undefined) {
-          setSelection(new Set([target]));
-          setAnchorId(target);
-        }
+        setRenamingId(target);
       }
-    };
-    window.addEventListener('keydown', onKey);
-    return () => window.removeEventListener('keydown', onKey);
-  }, [
-    viewer,
-    renamingId,
-    menu,
-    selection,
-    view.type,
-    hoveredId,
-    entries,
-    clearSelection,
-    confirmDelete,
-    openEntry,
-  ]);
+    } else if (e.key === 'Delete') {
+      if (selected.size > 0) {
+        e.preventDefault();
+        requestDelete([...selected]);
+      }
+    } else if (e.key === 'Enter') {
+      if (isInteractiveTarget(e.target) || selected.size !== 1) return;
+      const entry = entries.find((en) => en.id === first);
+      if (entry !== undefined) openEntry(entry);
+    } else if (ctrl && e.key.toLowerCase() === 'a') {
+      e.preventDefault();
+      selection.selectAll();
+    } else if (!ctrl && isNavKey(e.key)) {
+      e.preventDefault();
+      selection.move(e.key);
+    }
+  });
 
   // ── Вставка из буфера (Ctrl+V): файлы/картинки и ссылки ──────────────────
 
-  useEffect(() => {
-    const onPaste = (e: ClipboardEvent) => {
-      if (isTypingTarget(e.target)) return; // в полях вставка работает как обычно
-      const cd = e.clipboardData;
-      if (cd !== null && cd.files.length > 0) {
-        // скопированная в браузере картинка или файл из проводника
-        void runImport(Array.from(cd.files).map(pastedFile));
-        return;
-      }
-      const text = cd?.getData('text') ?? '';
-      if (isHttpUrl(text)) void addLink(text);
-    };
-    document.addEventListener('paste', onPaste);
-    return () => document.removeEventListener('paste', onPaste);
-  }, [addLink, runImport]);
+  useWindowEvent('paste', (e) => {
+    if (isTypingTarget(e.target) || anyModalOpen()) return; // в полях вставка обычная
+    const cd = e.clipboardData;
+    if (cd === null) return;
+    if (cd.files.length > 0) {
+      e.preventDefault();
+      // скопированная в браузере картинка или файл из проводника
+      importFiles(Array.from(cd.files).map(pastedFile));
+      return;
+    }
+    const text = cd.getData('text').trim();
+    if (isHttpUrl(text)) {
+      e.preventDefault();
+      void addLink(text);
+    }
+  });
+
+  // ── Drag&drop ─────────────────────────────────────────────────────────────
+
+  const hasFiles = (e: DragEvent) => e.dataTransfer.types.includes('Files');
+  const dropHandlers = {
+    onDragEnter: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth.current += 1;
+      setDragging(true);
+    },
+    onDragOver: (e: DragEvent) => {
+      if (hasFiles(e)) e.preventDefault();
+    },
+    onDragLeave: (e: DragEvent) => {
+      if (!hasFiles(e)) return;
+      dragDepth.current = Math.max(0, dragDepth.current - 1);
+      if (dragDepth.current === 0) setDragging(false);
+    },
+    onDrop: (e: DragEvent) => {
+      e.preventDefault();
+      dragDepth.current = 0;
+      setDragging(false);
+      void filesFromDataTransfer(e.dataTransfer).then((files) => importFiles(files));
+    },
+  };
 
   // ── Экраны ────────────────────────────────────────────────────────────────
 
-  if (statusQuery.isPending) {
+  if (status.isPending) {
     return (
-      <div className="flex h-screen items-center justify-center">
+      <div className="flex h-screen items-center justify-center" aria-busy="true">
         <span className="h-10 w-10 animate-spin rounded-full border-2 border-zinc-700 border-t-accent" />
       </div>
     );
   }
 
-  if (statusQuery.isError) {
+  if (status.data === undefined) {
     return (
       <div className="flex h-screen flex-col items-center justify-center gap-3 text-center">
-        <p className="text-sm text-zinc-300">Нет соединения с сервером (порт 8900).</p>
+        <p className="text-sm text-zinc-300">Нет соединения с сервером safeboxd.</p>
         <div className="flex gap-2">
           <button
+            type="button"
             className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:bg-accent-hover"
-            onClick={() => void statusQuery.refetch()}
+            onClick={() => void status.refetch()}
           >
             Повторить
           </button>
           <button
+            type="button"
             className="rounded-lg border border-zinc-700 px-4 py-1.5 text-sm text-zinc-300 hover:border-zinc-500"
             onClick={onLocked}
           >
@@ -481,44 +429,18 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
     );
   }
 
-  const crumbs: PathItem[] | null =
-    view.type === 'search' ? null : (listingQuery.data?.path ?? []);
-  const galleryLoading =
-    view.type === 'folder' ? listingQuery.isPending : searchQuery.isPending;
-  const contentError =
-    (view.type === 'folder' ? listingQuery.error : searchQuery.error) ?? null;
+  const contentError = (isSearch ? search.error : listing.error) ?? null;
+  const loading = isSearch ? search.isPending : listing.isPending;
 
   return (
-    <div
-      className="flex h-screen flex-col"
-      onDragEnter={(e) => {
-        if (e.dataTransfer.types.includes('Files')) {
-          dragDepth.current += 1;
-          setDragging(true);
-        }
-      }}
-      onDragOver={(e) => {
-        if (e.dataTransfer.types.includes('Files')) e.preventDefault();
-      }}
-      onDragLeave={() => {
-        dragDepth.current = Math.max(0, dragDepth.current - 1);
-        if (dragDepth.current === 0) setDragging(false);
-      }}
-      onDrop={(e) => {
-        e.preventDefault();
-        dragDepth.current = 0;
-        setDragging(false);
-        void filesFromDataTransfer(e.dataTransfer).then(runImport);
-      }}
-    >
+    <div className="flex h-screen flex-col" {...dropHandlers}>
       <TopBar
-        path={crumbs}
-        searchQuery={view.type === 'search' ? view.q : ''}
+        path={isSearch ? null : (listing.data?.path ?? [])}
+        searchQuery={committedQuery}
         searchText={searchText}
         onSearchText={setSearchText}
-        onClearSearch={() => setSearchText('')}
         onNavigate={navigate}
-        onImportFiles={(files) => void runImport(files)}
+        onImportFiles={(files) => importFiles(files)}
         onWatchFolder={() => void watch.enable()}
         onAddLink={(url) => void addLink(url)}
         onLock={() => void lock()}
@@ -530,22 +452,21 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
           <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
             Папки
           </p>
-          <FolderTree
-            current={view.type === 'folder' ? view.id : null}
-            onNavigate={navigate}
-          />
+          <FolderTree current={isSearch ? undefined : folderId} onNavigate={navigate} />
         </aside>
 
         <main
-          className="flex-1 overflow-y-auto p-4"
+          className="flex-1 overflow-y-auto p-4 pb-20"
           onClick={(e) => {
-            if (e.target === e.currentTarget) clearSelection();
+            const t = e.target as HTMLElement;
+            if (t === e.currentTarget || t.dataset.gallery !== undefined) clearSelection();
           }}
         >
           {contentError !== null ? (
             <div className="flex h-64 flex-col items-center justify-center gap-3">
               <p className="text-sm text-zinc-300">{contentError.message}</p>
               <button
+                type="button"
                 className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:bg-accent-hover"
                 onClick={() => navigate(null)}
               >
@@ -554,18 +475,12 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
             </div>
           ) : (
             <Gallery
-              items={displayItems}
-              loading={galleryLoading}
-              isSearch={view.type === 'search'}
-              selection={selection}
+              items={items}
+              loading={loading}
+              isSearch={isSearch}
+              selection={selection.selected}
               renamingId={renamingId}
-              onCardClick={onCardClick}
-              onToggleSelect={toggleSelect}
-              onContextMenu={onContextMenu}
-              onRenameStart={setRenamingId}
-              onRenameCommit={(id, name) => void commitRename(id, name)}
-              onRenameCancel={() => setRenamingId(null)}
-              onHover={setHoveredId}
+              handlers={cardHandlers}
             />
           )}
         </main>
@@ -573,29 +488,28 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
 
       <StatusBar
         safe={safe}
-        isSearch={view.type === 'search'}
+        isSearch={isSearch}
         found={entries.length}
         watch={{ status: watch.status, folderName: watch.folderName }}
         onWatchResume={() => void watch.resume()}
         onWatchDisable={() => void watch.disable()}
       />
 
-      {selection.size > 0 && (
+      {selection.selected.size > 0 && (
         <SelectionBar
-          count={selection.size}
-          onDownload={downloadSelection}
+          count={selection.selected.size}
+          canDownload={selectionUrls.length > 0}
+          onDownload={() => triggerDownloads(selectionUrls)}
           onRename={() => {
-            const id = [...selection][0];
+            const [id] = selection.selected;
             if (id !== undefined) setRenamingId(id);
           }}
-          onDelete={() => confirmDelete([...selection])}
+          onDelete={() => requestDelete([...selection.selected])}
           onClear={clearSelection}
         />
       )}
 
-      {importState !== null && (
-        <ImportPanel loaded={importState.loaded} total={importState.total} count={importState.count} />
-      )}
+      {importer.progress !== null && <ImportPanel progress={importer.progress} />}
 
       {menu !== null && (
         <ContextMenu
@@ -604,7 +518,7 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
           onOpen={openEntry}
           onDownload={downloadEntry}
           onRename={(entry) => setRenamingId(entry.id)}
-          onDelete={(entry) => confirmDelete([entry.id])}
+          onDelete={(entry) => requestDelete([entry.id])}
         />
       )}
 
@@ -612,29 +526,19 @@ export function MainShell({ onLocked }: { onLocked: () => void }) {
         <Lightbox
           photos={viewer.photos}
           index={viewer.index}
-          onIndex={(i) =>
-            setViewer((v) => (v !== null && v.kind === 'photos' ? { ...v, index: i } : v))
-          }
+          onIndex={(index) => setViewer({ ...viewer, index })}
           onClose={() => setViewer(null)}
-          onActivity={() => markActivity(activityRef)}
+          onActivity={markActivity}
         />
       )}
-
       {viewer?.kind === 'video' && (
-        <VideoModal
-          entry={viewer.entry}
-          onClose={() => setViewer(null)}
-          onActivity={() => markActivity(activityRef)}
-        />
+        <VideoModal entry={viewer.entry} onClose={() => setViewer(null)} onActivity={markActivity} />
       )}
+      {viewer?.kind === 'link' && <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />}
 
-      {viewer?.kind === 'link' && (
-        <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />
-      )}
+      {confirm !== null && <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />}
 
-      {idleRemainingSec !== null && idleRemainingSec > 0 && idleRemainingSec <= 60 && (
-        <IdleWarning seconds={idleRemainingSec} onStay={refresh} />
-      )}
+      {idleWarningSec !== null && <IdleWarning seconds={idleWarningSec} onStay={stay} />}
 
       {dragging && (
         <div className="pointer-events-none fixed inset-0 z-[60] m-3 flex items-center justify-center rounded-2xl border-2 border-dashed border-accent bg-accent/10 backdrop-blur-[2px]">

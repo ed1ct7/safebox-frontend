@@ -1,22 +1,18 @@
 import { useEffect, useRef, useState } from 'react';
-import { useMutation } from '@tanstack/react-query';
-import { changePassword } from '../api/endpoints';
 import type { PendingFile } from '../api/endpoints';
 import type { PathItem, SafeInfo } from '../api/types';
 import { filesFromInput } from '../lib/dnd';
 import { isHttpUrl } from '../lib/link';
 import { supportsWatch } from '../lib/fsAccess';
 import { useDismiss } from '../hooks/useDismiss';
+import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { useToast } from './Toasts';
-
-const MIN_PASSWORD = 6;
 
 export interface TopBarProps {
   path: PathItem[] | null; // null — режим поиска
-  searchQuery: string; // зафиксированный запрос (для чипа «Поиск: …»)
-  searchText: string; // текущий текст поля (пока с дебаунсом)
+  searchQuery: string; // зафиксированный запрос (для крошки «Поиск: …»)
+  searchText: string; // текущий текст поля (до дебаунса)
   onSearchText: (text: string) => void;
-  onClearSearch: () => void;
   onNavigate: (id: number | null) => void;
   onImportFiles: (files: PendingFile[]) => void;
   onWatchFolder: () => void;
@@ -25,50 +21,84 @@ export interface TopBarProps {
   safe: SafeInfo | undefined;
 }
 
+const toolButton =
+  'flex shrink-0 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500';
+
+const menuItem = 'block w-full px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-800';
+
 export function TopBar(props: TopBarProps) {
   return (
     <header className="flex h-14 shrink-0 items-center gap-2 border-b border-zinc-800 bg-zinc-950 px-3">
       <div className="min-w-0 flex-1">
         {props.path === null ? (
-          <span className="flex items-center gap-2 truncate text-sm text-zinc-300">
-            🔍 Поиск: «{props.searchQuery}»
+          <span className="flex min-w-0 items-center gap-2 text-sm text-zinc-300">
+            <span className="truncate">🔍 Поиск: «{props.searchQuery}»</span>
             <button
-              className="rounded px-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+              type="button"
+              className="shrink-0 rounded px-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
               title="Сбросить поиск (Esc)"
-              onClick={props.onClearSearch}
+              aria-label="Сбросить поиск"
+              onClick={() => props.onSearchText('')}
             >
               ✕
             </button>
           </span>
         ) : (
-          <nav className="flex min-w-0 items-center gap-0.5 text-sm">
-            <button
-              className="shrink-0 rounded px-2 py-1 text-zinc-300 transition hover:bg-zinc-800"
-              onClick={() => props.onNavigate(null)}
-            >
-              Все объекты
-            </button>
-            {props.path.map((p) => (
-              <span key={p.id} className="flex min-w-0 items-center">
-                <span className="text-zinc-700">/</span>
-                <button
-                  className="min-w-0 truncate rounded px-2 py-1 text-zinc-300 transition hover:bg-zinc-800"
-                  title={p.name}
-                  onClick={() => props.onNavigate(p.id)}
-                >
-                  {p.name}
-                </button>
-              </span>
-            ))}
-          </nav>
+          <Breadcrumbs path={props.path} onNavigate={props.onNavigate} />
         )}
       </div>
 
       <SearchInput text={props.searchText} onText={props.onSearchText} />
       <LinkInput onAdd={props.onAddLink} />
       <ImportMenu onImportFiles={props.onImportFiles} onWatchFolder={props.onWatchFolder} />
-      <SafeMenu safe={props.safe} onLock={props.onLock} />
+      <SafeMenu safe={props.safe} />
+      <button
+        type="button"
+        className={`${toolButton} hover:border-red-800 hover:text-red-200`}
+        title="Заблокировать сейф: ключ стирается из памяти, нужен пароль"
+        onClick={props.onLock}
+      >
+        🔒 Блокировка
+      </button>
     </header>
+  );
+}
+
+function Breadcrumbs({
+  path,
+  onNavigate,
+}: {
+  path: PathItem[];
+  onNavigate: (id: number | null) => void;
+}) {
+  const crumb = 'min-w-0 truncate rounded px-2 py-1 transition hover:bg-zinc-800';
+  return (
+    <nav aria-label="Путь" className="flex min-w-0 items-center gap-0.5 text-sm">
+      <button
+        type="button"
+        className={`${crumb} shrink-0 ${path.length === 0 ? 'font-medium text-zinc-100' : 'text-zinc-400'}`}
+        onClick={() => onNavigate(null)}
+      >
+        Все объекты
+      </button>
+      {path.map((p, i) => {
+        const last = i === path.length - 1;
+        return (
+          <span key={p.id} className="flex min-w-0 items-center">
+            <span className="text-zinc-700">/</span>
+            <button
+              type="button"
+              className={`${crumb} ${last ? 'font-medium text-zinc-100' : 'text-zinc-400'}`}
+              title={p.name}
+              aria-current={last ? 'page' : undefined}
+              onClick={() => onNavigate(p.id)}
+            >
+              {p.name}
+            </button>
+          </span>
+        );
+      })}
+    </nav>
   );
 }
 
@@ -79,8 +109,10 @@ function SearchInput({ text, onText }: { text: string; onText: (t: string) => vo
         🔍
       </span>
       <input
+        type="search"
         value={text}
-        placeholder="Поиск…"
+        placeholder="Поиск по сейфу…"
+        aria-label="Поиск по именам во всём сейфе"
         spellCheck={false}
         onChange={(e) => onText(e.target.value)}
         onKeyDown={(e) => {
@@ -103,10 +135,16 @@ function LinkInput({ onAdd }: { onAdd: (url: string) => void }) {
     <input
       value={value}
       placeholder="Ссылка ↵"
+      aria-label="Добавить ссылку"
       spellCheck={false}
       title="Вставьте ссылку и нажмите Enter — или просто Ctrl+V в любом месте окна"
       onChange={(e) => setValue(e.target.value)}
       onKeyDown={(e) => {
+        if (e.key === 'Escape') {
+          e.stopPropagation();
+          setValue('');
+          return;
+        }
         if (e.key !== 'Enter') return;
         e.preventDefault();
         const v = value.trim();
@@ -118,7 +156,7 @@ function LinkInput({ onAdd }: { onAdd: (url: string) => void }) {
         onAdd(v);
         setValue('');
       }}
-      className="w-32 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition focus:w-48 focus:border-accent"
+      className="w-32 shrink-0 rounded-lg border border-zinc-700 bg-zinc-900 px-2.5 py-1.5 text-sm text-zinc-100 placeholder-zinc-600 outline-none transition focus:w-48 focus:border-accent"
     />
   );
 }
@@ -131,7 +169,7 @@ function ImportMenu({
   onWatchFolder: () => void;
 }) {
   const [open, setOpen] = useState(false);
-  const ref = useDismiss<HTMLDivElement>(() => setOpen(false));
+  const ref = useDismiss<HTMLDivElement>(() => setOpen(false), open);
   const fileRef = useRef<HTMLInputElement>(null);
   const folderRef = useRef<HTMLInputElement>(null);
 
@@ -145,32 +183,39 @@ function ImportMenu({
     input?.click();
   };
 
+  const onPicked = (input: HTMLInputElement) => {
+    onImportFiles(filesFromInput(input));
+    input.value = '';
+  };
+
   return (
     <div ref={ref} className="relative shrink-0">
       <button
-        className="flex items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500"
+        type="button"
+        className={toolButton}
+        aria-haspopup="menu"
+        aria-expanded={open}
         onClick={() => setOpen((o) => !o)}
       >
         ⬆ Импорт ▾
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl">
-          <button
-            className="block w-full px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-800"
-            onClick={() => pick(fileRef.current)}
-          >
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-1 w-60 overflow-hidden rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+        >
+          <button type="button" role="menuitem" className={menuItem} onClick={() => pick(fileRef.current)}>
             Файлы…
           </button>
-          <button
-            className="block w-full px-3 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-800"
-            onClick={() => pick(folderRef.current)}
-          >
+          <button type="button" role="menuitem" className={menuItem} onClick={() => pick(folderRef.current)}>
             Папку целиком…
           </button>
           {supportsWatch() && (
             <button
-              className="block w-full border-t border-zinc-800 px-3 py-1.5 text-left text-sm text-zinc-300 hover:bg-zinc-800"
-              title="Всё новое из этой папки будет попадать в сейф автоматически"
+              type="button"
+              role="menuitem"
+              className={`${menuItem} border-t border-zinc-800 text-zinc-300`}
+              title="Всё новое из этой папки будет попадать в открытую папку сейфа автоматически"
               onClick={() => {
                 setOpen(false);
                 onWatchFolder();
@@ -186,150 +231,57 @@ function ImportMenu({
         type="file"
         multiple
         className="hidden"
-        onChange={(e) => {
-          onImportFiles(filesFromInput(e.currentTarget));
-          e.currentTarget.value = '';
-        }}
+        onChange={(e) => onPicked(e.currentTarget)}
       />
-      <input
-        ref={folderRef}
-        type="file"
-        className="hidden"
-        onChange={(e) => {
-          onImportFiles(filesFromInput(e.currentTarget));
-          e.currentTarget.value = '';
-        }}
-      />
+      <input ref={folderRef} type="file" className="hidden" onChange={(e) => onPicked(e.currentTarget)} />
     </div>
   );
 }
 
-function SafeMenu({ safe, onLock }: { safe: SafeInfo | undefined; onLock: () => void }) {
+/** Меню сейфа (UF-12): полный путь файла и смена пароля. */
+function SafeMenu({ safe }: { safe: SafeInfo | undefined }) {
   const [open, setOpen] = useState(false);
   const [changing, setChanging] = useState(false);
-  const ref = useDismiss<HTMLDivElement>(() => {
-    setOpen(false);
-    setChanging(false);
-  });
-  const toast = useToast();
+  const ref = useDismiss<HTMLDivElement>(() => setOpen(false), open);
 
-  const [oldPassword, setOld] = useState('');
-  const [newPassword, setNew] = useState('');
-  const [confirm, setConfirm] = useState('');
-  const [error, setError] = useState<string | null>(null);
-
-  const passwordMut = useMutation({
-    mutationFn: () => changePassword(oldPassword, newPassword, confirm),
-    onSuccess: () => {
-      toast('Пароль изменён', 'success');
-      setOpen(false);
-      setChanging(false);
-      setOld('');
-      setNew('');
-      setConfirm('');
-      setError(null);
-    },
-    onError: (e: Error) => setError(e.message),
-  });
-
-  const submitPassword = () => {
-    setError(null);
-    if (newPassword.length < MIN_PASSWORD) {
-      setError(`Новый пароль — минимум ${MIN_PASSWORD} символов`);
-      return;
-    }
-    if (newPassword !== confirm) {
-      setError('Пароли не совпадают');
-      return;
-    }
-    passwordMut.mutate();
-  };
-
-  const name = safe === undefined ? '' : (safe.path.split(/[\\/]/).pop() ?? safe.path);
-
-  const fieldClass =
-    'w-full rounded border border-zinc-700 bg-zinc-950 px-2 py-1.5 text-sm outline-none focus:border-accent';
+  const name = safe === undefined ? 'Сейф' : (safe.path.split(/[\\/]/).pop() ?? safe.path);
 
   return (
     <div ref={ref} className="relative shrink-0">
       <button
-        className="flex max-w-56 items-center gap-1.5 rounded-lg border border-zinc-700 bg-zinc-900 px-3 py-1.5 text-sm text-zinc-200 transition hover:border-zinc-500"
-        onClick={() => setOpen((o) => !o)}
+        type="button"
+        className={`${toolButton} max-w-56`}
+        aria-haspopup="menu"
+        aria-expanded={open}
         title={safe?.path}
+        onClick={() => setOpen((o) => !o)}
       >
-        🔒 <span className="truncate">{name}</span> ▾
+        🗄 <span className="truncate">{name}</span> ▾
       </button>
       {open && (
-        <div className="absolute right-0 top-full z-50 mt-1 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl">
-          {changing ? (
-            <form
-              className="flex w-72 flex-col gap-2 p-3"
-              onSubmit={(e) => {
-                e.preventDefault();
-                submitPassword();
-              }}
-            >
-              <input
-                type="password"
-                autoFocus
-                placeholder="Старый пароль"
-                className={fieldClass}
-                value={oldPassword}
-                onChange={(e) => setOld(e.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Новый пароль"
-                className={fieldClass}
-                value={newPassword}
-                onChange={(e) => setNew(e.target.value)}
-              />
-              <input
-                type="password"
-                placeholder="Повторите новый"
-                className={fieldClass}
-                value={confirm}
-                onChange={(e) => setConfirm(e.target.value)}
-              />
-              {error !== null && <p className="text-xs text-red-400">{error}</p>}
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  className="rounded px-3 py-1 text-sm text-zinc-400 hover:text-zinc-200"
-                  onClick={() => {
-                    setChanging(false);
-                    setError(null);
-                  }}
-                >
-                  Отмена
-                </button>
-                <button
-                  type="submit"
-                  disabled={passwordMut.isPending}
-                  className="rounded bg-accent px-3 py-1 text-sm font-medium text-white hover:bg-accent-hover disabled:opacity-50"
-                >
-                  Сменить
-                </button>
-              </div>
-            </form>
-          ) : (
-            <>
-              <button
-                className="block w-full px-4 py-1.5 text-left text-sm text-zinc-200 hover:bg-zinc-800"
-                onClick={() => setChanging(true)}
-              >
-                Сменить пароль
-              </button>
-              <button
-                className="block w-full px-4 py-1.5 text-left text-sm text-red-300 hover:bg-zinc-800"
-                onClick={onLock}
-              >
-                Заблокировать
-              </button>
-            </>
+        <div
+          role="menu"
+          className="absolute right-0 top-full z-50 mt-1 w-72 rounded-lg border border-zinc-700 bg-zinc-900 py-1 shadow-2xl"
+        >
+          {safe !== undefined && (
+            <p className="break-all border-b border-zinc-800 px-3 pb-2 pt-1 text-xs text-zinc-500">
+              {safe.path}
+            </p>
           )}
+          <button
+            type="button"
+            role="menuitem"
+            className={menuItem}
+            onClick={() => {
+              setOpen(false);
+              setChanging(true);
+            }}
+          >
+            Сменить пароль…
+          </button>
         </div>
       )}
+      {changing && <ChangePasswordDialog onClose={() => setChanging(false)} />}
     </div>
   );
 }

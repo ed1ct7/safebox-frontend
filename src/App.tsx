@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { getToken, setToken, UNAUTHORIZED_EVENT } from './api/client';
 import type { Session } from './api/types';
@@ -16,15 +16,18 @@ function Root() {
   const [authorized, setAuthorized] = useState<boolean>(() => getToken() !== null);
   const qc = useQueryClient();
 
-  // Любой 401 от API = сессия мертва (блокировка, другая вкладка) → экран входа
-  useEffect(() => {
-    const onUnauthorized = () => {
-      setAuthorized(false);
-      qc.clear();
-    };
-    window.addEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
-    return () => window.removeEventListener(UNAUTHORIZED_EVENT, onUnauthorized);
+  // Выход из сейфа любым путём: токен и кэш расшифрованных данных стираются
+  const signOut = useCallback(() => {
+    setToken(null);
+    qc.clear();
+    setAuthorized(false);
   }, [qc]);
+
+  // Любой 401 от API = сессия мертва (блокировка, автоблокировка, другая вкладка)
+  useEffect(() => {
+    window.addEventListener(UNAUTHORIZED_EVENT, signOut);
+    return () => window.removeEventListener(UNAUTHORIZED_EVENT, signOut);
+  }, [signOut]);
 
   const handleSession = (s: Session) => {
     setToken(s.token);
@@ -32,16 +35,7 @@ function Root() {
     setAuthorized(true);
   };
 
-  const handleLocked = () => {
-    setAuthorized(false);
-    qc.clear();
-  };
-
-  return authorized ? (
-    <MainShell onLocked={handleLocked} />
-  ) : (
-    <LoginScreen onSession={handleSession} />
-  );
+  return authorized ? <MainShell onLocked={signOut} /> : <LoginScreen onSession={handleSession} />;
 }
 
 export default function App() {
