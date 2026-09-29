@@ -1,7 +1,7 @@
 import type { ApiError } from './types';
 
 // Токен — sessionStorage: переживает перезагрузку вкладки, не переживает её
-// закрытие (рекомендация docs/api.md). В URL токен не попадает никогда:
+// закрытие (рекомендация контракта REST API). В URL токен не попадает никогда:
 // медиа ходит через HttpOnly-cookie sbx_media, которую сервер ставит при unlock.
 const TOKEN_KEY = 'sbx_token';
 

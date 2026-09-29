@@ -1,4 +1,4 @@
-// Рукописные типы, синхронизированные с docs/api.md репозитория бэкенда (раздел «Типы»).
+// Рукописные типы, синхронизированные с «REST API — контракт /api/v1» в Linqtab (раздел «Типы»).
 // Источник правды по контракту — этот документ и src/http/src/json.cpp; менять только вместе с ними.
 
 export type EntryKind = 'folder' | 'file' | 'photo' | 'video' | 'link';
@@ -70,7 +70,7 @@ export interface ApiError {
   error: { code: string; message: string };
 }
 
-// Ответы эндпоинтов (разделы «Сейф», «Записи», «Поиск» api.md)
+// Ответы эндпоинтов (разделы «Сейф», «Записи», «Поиск» контракта)
 export interface HeartbeatResponse {
   idleRemainingSec: number;
 }
