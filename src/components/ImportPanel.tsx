@@ -1,10 +1,16 @@
 import type { ImportProgress } from '../hooks/useImporter';
 import { formatBytes, plural } from '../lib/format';
 
+const PHASE_TEXT = {
+  planning: 'Проверка совпадений имён…',
+  deciding: 'Ждём решения по совпадениям…',
+  uploading: '',
+} as const;
+
 /** Индикатор потокового импорта (UF-7). */
 export function ImportPanel({ progress }: { progress: ImportProgress }) {
-  const { loaded, total, count, queued } = progress;
-  const pct = total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null;
+  const { phase, loaded, total, count, queued } = progress;
+  const pct = phase === 'uploading' && total > 0 ? Math.min(100, Math.round((loaded / total) * 100)) : null;
   return (
     <div
       role="status"
@@ -14,9 +20,14 @@ export function ImportPanel({ progress }: { progress: ImportProgress }) {
         <span>Импорт: {plural(count, 'файл', 'файла', 'файлов')}</span>
         {queued > 0 && <span className="text-xs text-zinc-500">в очереди: {queued}</span>}
       </div>
+      {PHASE_TEXT[phase] !== '' && <p className="mt-1 text-xs text-zinc-500">{PHASE_TEXT[phase]}</p>}
       <div className="mt-2 h-1.5 overflow-hidden rounded-full bg-zinc-800">
         {pct === null ? (
-          <div className="h-full w-full animate-pulse rounded-full bg-accent" />
+          <div
+            className={`h-full w-full rounded-full ${
+              phase === 'deciding' ? 'bg-zinc-600' : 'animate-pulse bg-accent'
+            }`}
+          />
         ) : (
           <div className="h-full rounded-full bg-accent transition-all" style={{ width: `${pct}%` }} />
         )}

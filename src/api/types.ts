@@ -3,6 +3,18 @@
 
 export type EntryKind = 'folder' | 'file' | 'photo' | 'video' | 'link';
 
+/** Присвоение тега записи; inherit — действует на всё поддерево. */
+export interface TagRef {
+  tagId: number;
+  inherit: boolean;
+}
+
+/** Тег, унаследованный от предка fromId (снимается только там). */
+export interface InheritedTagRef {
+  tagId: number;
+  fromId: number;
+}
+
 export interface Entry {
   id: number;
   parentId: number | null; // null — корень «Все объекты»
@@ -15,6 +27,12 @@ export interface Entry {
   modifiedAt: number; // unix-мс
   url?: string; // только kind === 'link' (http/https)
   domain?: string; // только kind === 'link', для карточки
+  description: string; // '' если нет
+  childCount: number; // прямых детей (бейдж вложений)
+  tags: TagRef[]; // прямые
+  inheritedTags: InheritedTagRef[]; // от предков с inherit
+  sourceModifiedAt: number | null; // unix-мс изменения исходного файла на диске
+  previewPending?: boolean; // только у link: предпросмотр в очереди
 }
 
 export interface PathItem {
@@ -23,8 +41,8 @@ export interface PathItem {
 }
 
 export interface Listing {
-  folder: Entry | null; // null — корень
-  path: PathItem[]; // крошки от корня до папки включительно
+  parent: Entry | null; // открытая папка или запись с вложениями; null — корень
+  path: PathItem[]; // крошки от корня до parent включительно
   entries: Entry[]; // папки первыми, дальше по имени без учёта регистра
 }
 
@@ -55,15 +73,40 @@ export interface Session {
 
 export interface SearchHit {
   entry: Entry;
-  path: PathItem[]; // папки до родителя
+  path: PathItem[]; // предки до родителя
+  matchedIn: 'name' | 'description' | null;
 }
+
+/** Как поступить с записью, чьё имя уже занято у нового родителя (UF-14, UF-15). */
+export type ConflictPolicy = 'keepBoth' | 'replace' | 'skip';
 
 export interface ImportResult {
   imported: number;
-  failed: number;
-  /** точные дубликаты (та же папка + имя без учёта регистра + размер) — сервер их не вставляет */
+  replaced: number;
+  /** пропущенные сервером; отказ от файла в диалоге до загрузки сюда не попадает */
   skipped: number;
+  failed: number;
   failures: { path: string; message: string }[];
+}
+
+export interface Tag {
+  id: number;
+  categoryId: number;
+  name: string;
+}
+
+export interface TagWithCount extends Tag {
+  count: number; // записей с прямым присвоением
+}
+
+export interface Category {
+  id: number;
+  name: string;
+  tags: TagWithCount[];
+}
+
+export interface Settings {
+  linkPreviews: boolean;
 }
 
 export interface ApiError {
@@ -86,4 +129,77 @@ export interface FoldersResponse {
 export interface SearchResponse {
   query: string;
   results: SearchHit[];
+}
+
+export interface TagsResponse {
+  categories: Category[];
+}
+
+export interface RemovedTagsResponse {
+  removedTags: number;
+  affectedEntries: number;
+}
+
+export interface AffectedResponse {
+  affectedEntries: number;
+}
+
+export interface UpdatedResponse {
+  updated: number;
+}
+
+/** PATCH /entries/:id: переданные поля меняются, остальные остаются. */
+export interface EntryPatch {
+  name?: string;
+  description?: string;
+  url?: string; // только у ссылки, http/https
+}
+
+export interface MoveConflict {
+  id: number; // перемещаемая запись
+  existing: Entry; // занявшая имя у нового родителя
+}
+
+export interface MovePlanResponse {
+  conflicts: MoveConflict[];
+}
+
+export interface MoveResult {
+  moved: number;
+  replaced: number;
+  skipped: number;
+}
+
+export interface ImportPlanFile {
+  path: string; // как в filename части multipart
+  size: number;
+}
+
+export interface ImportConflict {
+  path: string;
+  existing: Entry;
+}
+
+export interface ImportPlanResponse {
+  conflicts: ImportConflict[];
+  newFiles: number;
+}
+
+/** Первая часть multipart-импорта: lastModified файла и решение по совпадению имени. */
+export interface ImportManifest {
+  files: Record<string, { lastModified?: number; onConflict?: ConflictPolicy }>;
+}
+
+export type TagMatch = 'categories' | 'all' | 'any';
+
+export interface NewLink {
+  url: string;
+  name?: string;
+  path?: string; // «Закладки/Работа» — папки по правилам импорта
+}
+
+export interface CreateLinksResponse {
+  created: Entry[];
+  existing: { url: string; entryId: number }[];
+  invalid: string[];
 }

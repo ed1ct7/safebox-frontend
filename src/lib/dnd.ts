@@ -1,4 +1,5 @@
 import type { PendingFile } from '../api/endpoints';
+import { DRAG_MIME } from './move';
 
 /**
  * Файлы из drag&drop, включая рекурсивный обход папок (webkitGetAsEntry).
@@ -88,4 +89,33 @@ export function pastedFile(file: File): PendingFile {
   const p = (x: number) => String(x).padStart(2, '0');
   const name = `Вставлено ${d.getFullYear()}-${p(d.getMonth() + 1)}-${p(d.getDate())} ${p(d.getHours())}-${p(d.getMinutes())}-${p(d.getSeconds())}.${ext}`;
   return new File([file], name, { type: file.type, lastModified: file.lastModified }) as PendingFile;
+}
+
+export type DragKind = 'entries' | 'files' | 'link';
+
+/**
+ * Что тащат, по типам данных переноса (во время dragover содержимое скрыто).
+ * Карточки сейфа, файлы из проводника и ссылка/текст из браузера различаются
+ * типами; при нескольких сразу побеждает первый по списку: картинка со страницы
+ * несёт и файл, и адрес - это файл.
+ */
+export function dragKind(types: ArrayLike<string> | readonly string[]): DragKind | null {
+  const list = Array.from(types);
+  if (list.includes(DRAG_MIME)) return 'entries';
+  if (list.includes('Files')) return 'files';
+  if (list.includes('text/uri-list') || list.includes('text/plain')) return 'link';
+  return null;
+}
+
+/**
+ * Текст с адресами из переноса: text/uri-list (строки-комментарии '#' пропускаем),
+ * а если в нём пусто - text/plain. Дальше его разбирает parseUrlList.
+ */
+export function linkTextFromDataTransfer(dt: Pick<DataTransfer, 'getData'>): string {
+  const uriList = dt
+    .getData('text/uri-list')
+    .split(/\r\n|\r|\n/)
+    .filter((line) => !line.trimStart().startsWith('#'))
+    .join('\n');
+  return uriList.trim() === '' ? dt.getData('text/plain') : uriList;
 }

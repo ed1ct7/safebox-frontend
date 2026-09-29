@@ -50,3 +50,25 @@ export function folderAfterDelete(
   if (i === -1) return undefined;
   return i === 0 ? null : (path[i - 1]?.id ?? null);
 }
+
+/**
+ * Записи и все их папки-потомки: сюда их перемещать нельзя (в себя или в своё
+ * содержимое). Обходит только папки — вложения записей в дереве не показываются.
+ */
+export function subtreeIds(nodes: readonly FolderNode[], ids: readonly number[]): Set<number> {
+  const children = new Map<number, number[]>();
+  for (const n of nodes) {
+    if (n.parentId === null) continue;
+    const list = children.get(n.parentId);
+    if (list === undefined) children.set(n.parentId, [n.id]);
+    else list.push(n.id);
+  }
+  const out = new Set<number>();
+  const stack = [...ids];
+  for (let id = stack.pop(); id !== undefined; id = stack.pop()) {
+    if (out.has(id)) continue;
+    out.add(id);
+    stack.push(...(children.get(id) ?? []));
+  }
+  return out;
+}

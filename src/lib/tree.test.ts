@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { buildTree, folderAfterDelete, selfAndAncestors } from './tree';
+import { buildTree, folderAfterDelete, selfAndAncestors, subtreeIds } from './tree';
 import type { FolderNode } from '../api/types';
 
 const nodes: FolderNode[] = [
@@ -57,5 +57,22 @@ describe('folderAfterDelete', () => {
 
   it('в корне удалять нечего', () => {
     expect(folderAfterDelete([], new Set([1]))).toBeUndefined();
+  });
+});
+
+describe('subtreeIds', () => {
+  it('папка и все её вложенные папки', () => {
+    expect([...subtreeIds(nodes, [1])].sort()).toEqual([1, 2, 3, 5]);
+    expect([...subtreeIds(nodes, [2])].sort()).toEqual([2, 5]);
+  });
+
+  it('несколько записей - объединение их поддеревьев', () => {
+    expect([...subtreeIds(nodes, [3, 4])].sort()).toEqual([3, 4]);
+    expect([...subtreeIds(nodes, [2, 4])].sort()).toEqual([2, 4, 5]);
+  });
+
+  it('запись вне дерева (не папка) - только она сама', () => {
+    expect([...subtreeIds(nodes, [99])]).toEqual([99]);
+    expect([...subtreeIds(nodes, [])]).toEqual([]);
   });
 });

@@ -76,7 +76,11 @@ export function toApiError(status: number, body: unknown): ApiRequestError {
   return new ApiRequestError(status, 'internal', `Ошибка сервера (${status})`);
 }
 
-async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+async function send<T>(
+  method: string,
+  path: string,
+  body?: unknown,
+): Promise<{ status: number; data: T }> {
   const headers: Record<string, string> = {};
   const token = getToken();
   if (token !== null) headers.Authorization = `Bearer ${token}`;
@@ -104,7 +108,11 @@ async function request<T>(method: string, path: string, body?: unknown): Promise
   if (data === null) {
     throw new ApiRequestError(res.status, 'bad_response', 'Некорректный ответ сервера');
   }
-  return data as T;
+  return { status: res.status, data: data as T };
+}
+
+async function request<T>(method: string, path: string, body?: unknown): Promise<T> {
+  return (await send<T>(method, path, body)).data;
 }
 
 export const api = {
@@ -112,4 +120,6 @@ export const api = {
   post: <T>(path: string, body?: unknown) => request<T>('POST', path, body),
   patch: <T>(path: string, body?: unknown) => request<T>('PATCH', path, body),
   delete: <T>(path: string) => request<T>('DELETE', path),
+  /** Когда важен код успеха: POST /tags отвечает 201 (создан) или 200 (уже был). */
+  postWithStatus: <T>(path: string, body?: unknown) => send<T>('POST', path, body),
 };

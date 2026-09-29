@@ -60,10 +60,22 @@ export function Modal({
   );
 }
 
-/** Карточка диалога на тёмном фоне. */
-export function DialogPanel({ title, children }: { title: string; children: ReactNode }) {
+/** Карточка диалога на тёмном фоне. wide - для диалогов со списками. */
+export function DialogPanel({
+  title,
+  children,
+  wide = false,
+}: {
+  title: string;
+  children: ReactNode;
+  wide?: boolean;
+}) {
   return (
-    <div className="w-full max-w-md rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl">
+    <div
+      className={`w-full rounded-xl border border-zinc-700 bg-zinc-900 p-5 shadow-2xl ${
+        wide ? 'max-w-2xl' : 'max-w-md'
+      }`}
+    >
       <h3 className="text-base font-medium text-zinc-100">{title}</h3>
       {children}
     </div>

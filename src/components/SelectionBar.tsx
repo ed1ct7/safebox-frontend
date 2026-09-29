@@ -1,16 +1,25 @@
+import type { Entry } from '../api/types';
+import { BulkTagsButton } from './BulkTags';
+
 /** UF-9: панель массовых действий при выделении. Переименовать — только одно. */
 export function SelectionBar({
+  entries,
   count,
   canDownload,
   onDownload,
   onRename,
+  onMove,
+  onProperties,
   onDelete,
   onClear,
 }: {
+  entries: Entry[]; // выделенные записи: для «Теги…»
   count: number;
   canDownload: boolean; // в выделении есть что скачивать (у ссылок нечего)
   onDownload: () => void;
   onRename: () => void;
+  onMove: () => void;
+  onProperties: () => void;
   onDelete: () => void;
   onClear: () => void;
 }) {
@@ -34,6 +43,13 @@ export function SelectionBar({
         onClick={onRename}
       >
         Переименовать
+      </button>
+      <button type="button" className={btn} onClick={onMove}>
+        Переместить…
+      </button>
+      <BulkTagsButton entries={entries} className={btn} />
+      <button type="button" className={btn} title="Свойства (Alt+Enter)" onClick={onProperties}>
+        Свойства
       </button>
       <button
         type="button"

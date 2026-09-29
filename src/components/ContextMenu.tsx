@@ -1,6 +1,8 @@
-import { useLayoutEffect, useState } from 'react';
+import { useLayoutEffect, useMemo, useState } from 'react';
 import type { Entry } from '../api/types';
 import { useDismiss } from '../hooks/useDismiss';
+import { menuItemsFor } from '../lib/menu';
+import type { MenuAction } from '../lib/menu';
 
 export interface ContextMenuState {
   x: number;
@@ -10,24 +12,23 @@ export interface ContextMenuState {
 
 const MARGIN = 8;
 
-/** UF-10: правый клик — Открыть / Скачать / Переименовать / Удалить. */
+/**
+ * UF-10: правый клик - Открыть / Открыть вложения / Скачать / Скачать вложения /
+ * Свойства / Переименовать / Переместить… / Теги… / Удалить; у ссылки (UF-6) ещё
+ * «Копировать адрес» и «Обновить предпросмотр». Набор пунктов - lib/menu.
+ */
 export function ContextMenu({
   state,
   onClose,
-  onOpen,
-  onDownload,
-  onRename,
-  onDelete,
+  onAction,
 }: {
   state: ContextMenuState;
   onClose: () => void;
-  onOpen: (entry: Entry) => void;
-  onDownload: (entry: Entry) => void;
-  onRename: (entry: Entry) => void;
-  onDelete: (entry: Entry) => void;
+  onAction: (action: MenuAction, entry: Entry) => void;
 }) {
   const ref = useDismiss<HTMLDivElement>(onClose);
   const { entry } = state;
+  const items = useMemo(() => menuItemsFor(entry), [entry]);
   const [pos, setPos] = useState({ left: state.x, top: state.y });
 
   // не даём меню вылезти за край окна: меряем после отрисовки
@@ -41,13 +42,6 @@ export function ContextMenu({
     });
   }, [ref, state.x, state.y]);
 
-  const items: { label: string; action: () => void; danger?: boolean }[] = [
-    { label: 'Открыть', action: () => onOpen(entry) },
-    ...(entry.kind === 'link' ? [] : [{ label: 'Скачать', action: () => onDownload(entry) }]),
-    { label: 'Переименовать', action: () => onRename(entry) },
-    { label: 'Удалить', action: () => onDelete(entry), danger: true },
-  ];
-
   return (
     <div
       ref={ref}
@@ -58,18 +52,19 @@ export function ContextMenu({
     >
       {items.map((item) => (
         <button
-          key={item.label}
+          key={item.action}
           type="button"
           role="menuitem"
-          className={`block w-full px-4 py-1.5 text-left text-sm transition hover:bg-zinc-800 ${
+          className={`flex w-full items-center justify-between gap-6 px-4 py-1.5 text-left text-sm transition hover:bg-zinc-800 ${
             item.danger === true ? 'text-red-300' : 'text-zinc-200'
-          }`}
+          } ${item.separatorBefore === true ? 'mt-1 border-t border-zinc-800 pt-2' : ''}`}
           onClick={() => {
             onClose();
-            item.action();
+            onAction(item.action, entry);
           }}
         >
           {item.label}
+          {item.hint !== undefined && <span className="text-xs text-zinc-500">{item.hint}</span>}
         </button>
       ))}
     </div>

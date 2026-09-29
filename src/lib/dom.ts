@@ -37,3 +37,37 @@ export function triggerDownloads(urls: readonly string[]): void {
     else setTimeout(() => triggerDownload(url), i * DOWNLOAD_GAP_MS);
   });
 }
+
+/** Копирование в буфер: Clipboard API, а если он недоступен или отказал — через выделение. */
+export async function copyText(text: string): Promise<boolean> {
+  try {
+    await navigator.clipboard.writeText(text);
+    return true;
+  } catch {
+    // нет разрешения или небезопасный контекст — пробуем старый способ
+  }
+  const area = document.createElement('textarea');
+  area.value = text;
+  area.setAttribute('readonly', '');
+  area.style.position = 'fixed';
+  area.style.opacity = '0';
+  document.body.appendChild(area);
+  area.select();
+  try {
+    return document.execCommand('copy');
+  } catch {
+    return false;
+  } finally {
+    area.remove();
+  }
+}
+
+/** Текст файла в UTF-8. FileReader вместо Blob.text(): тот есть не везде (jsdom). */
+export function readFileText(file: Blob): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve(String(reader.result));
+    reader.onerror = () => reject(reader.error ?? new Error('Не удалось прочитать файл'));
+    reader.readAsText(file);
+  });
+}

@@ -1,4 +1,4 @@
-import type { Entry } from '../api/types';
+import type { Entry, SearchHit } from '../api/types';
 import type { Selection } from '../lib/selection';
 import { EntryCard } from './EntryCard';
 import type { EntryCardHandlers } from './EntryCard';
@@ -7,6 +7,10 @@ export interface DisplayItem {
   entry: Entry;
   /** показывается вместо размера/домена: путь папки в результатах поиска */
   caption?: string;
+  /** где нашлось: в описании помечаем на карточке (UF-8) */
+  matchedIn?: SearchHit['matchedIn'];
+  /** только что добавлена (UF-20): карточка подсвечена на пару секунд */
+  fresh?: boolean;
 }
 
 /** Сетка карточек (UF-3) с пустым состоянием «Здесь пока пусто» (UF-1). */
@@ -58,8 +62,10 @@ export function Gallery({
           key={item.entry.id}
           entry={item.entry}
           caption={item.caption}
+          matchedIn={item.matchedIn}
           selected={selection.has(item.entry.id)}
           renaming={renamingId === item.entry.id}
+          fresh={item.fresh}
           handlers={handlers}
         />
       ))}
