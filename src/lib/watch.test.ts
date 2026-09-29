@@ -19,6 +19,16 @@ describe('skipWatchName', () => {
   });
 });
 
+describe('fpOf', () => {
+  it('не раскрывает имя файла и различает версии', () => {
+    const a = f('секретный договор.pdf', 100, 1);
+    expect(fpOf(a)).not.toContain('договор');
+    expect(fpOf(a)).toBe(fpOf({ ...a }));
+    expect(fpOf(a)).not.toBe(fpOf({ ...a, size: 101 }));
+    expect(fpOf(a)).not.toBe(fpOf({ ...a, mtime: 2 }));
+  });
+});
+
 describe('processPoll', () => {
   it('первый опрос помечает существующие файлы без импорта (baseline)', () => {
     const files = [f('старое.jpg', 10, 1), f('книга.pdf', 100, 2)];

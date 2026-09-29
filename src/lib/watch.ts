@@ -7,7 +7,7 @@ export interface WatchFile {
 }
 
 export interface WatchState {
-  /** отпечатки уже обработанных файлов (имя‖размер‖mtime) */
+  /** отпечатки уже обработанных файлов (хеш имя‖размер‖mtime, см. fpOf) */
   known: Set<string>;
   /** сколько опросов подряд файл виден с неизменным отпечатком */
   sightings: Map<string, number>;
@@ -29,8 +29,30 @@ export function skipWatchName(name: string): boolean {
   return SKIP_EXT.test(name) || SKIP_NAMES.has(name.toLowerCase());
 }
 
+// 53-битный хеш cyrb53 (public domain): быстрый и синхронный — processPoll остаётся чистым.
+function hash53(str: string, seed: number): number {
+  let h1 = 0xdeadbeef ^ seed;
+  let h2 = 0x41c6ce57 ^ seed;
+  for (let i = 0; i < str.length; i += 1) {
+    const ch = str.charCodeAt(i);
+    h1 = Math.imul(h1 ^ ch, 2654435761);
+    h2 = Math.imul(h2 ^ ch, 1597334677);
+  }
+  h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507);
+  h1 ^= Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+  h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507);
+  h2 ^= Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+  return 4294967296 * (2097151 & h2) + (h1 >>> 0);
+}
+
+/**
+ * Отпечаток файла (имя‖размер‖mtime) — хеш, а не сами поля: отпечатки лежат
+ * в IndexedDB вне сейфа и переживают блокировку, а имена файлов, попавших
+ * в сейф, по ТЗ должны быть доступны только после ввода пароля.
+ */
 export function fpOf(f: WatchFile): string {
-  return `${f.name}\u0000${f.size}\u0000${f.mtime}`;
+  const key = `${f.name}\u0000${f.size}\u0000${f.mtime}`;
+  return hash53(key, 0).toString(36) + hash53(key, 1).toString(36);
 }
 
 /**

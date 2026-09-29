@@ -13,7 +13,11 @@ import type { WatchState } from '../lib/watch';
 const POLL_MS = 4000;
 
 const DIR_KEY = 'watch:dir';
-const KNOWN_KEY = 'watch:known';
+// v2: отпечатки — хеши (lib/watch fpOf). Нет v2 → новый baseline: существующие
+// файлы помечаются известными, а не импортируются заново.
+const KNOWN_KEY = 'watch:known:v2';
+// v1 хранил имена файлов открытым текстом вне сейфа — стираем при первом запуске
+const LEGACY_KNOWN_KEY = 'watch:known';
 
 interface PersistedKnown {
   known: string[];
@@ -46,21 +50,30 @@ export function useWatchFolder(
     }
   }, []);
 
+  const polling = useRef(false);
+
   const poll = useCallback(async () => {
     const dir = dirRef.current;
-    if (dir === null) return;
+    // большая папка читается дольше интервала: два опроса поверх одного
+    // состояния импортировали бы один и тот же файл дважды
+    if (dir === null || polling.current) return;
+    polling.current = true;
     try {
       const entries = await listWatchEntries(dir);
+      if (dirRef.current !== dir) return; // наблюдение выключили, пока читали папку
+      const prev = stateRef.current;
       const { toImport, state } = processPoll(
         entries.map((e) => e.wf),
-        stateRef.current,
+        prev,
       );
       stateRef.current = state;
-      const persisted: PersistedKnown = {
-        known: [...state.known],
-        baselineDone: state.baselineDone,
-      };
-      void idbSet(KNOWN_KEY, persisted);
+      if (state.known.size !== prev.known.size || state.baselineDone !== prev.baselineDone) {
+        const persisted: PersistedKnown = {
+          known: [...state.known],
+          baselineDone: state.baselineDone,
+        };
+        void idbSet(KNOWN_KEY, persisted);
+      }
       if (toImport.length > 0) {
         const byFp = new Map(entries.map((e) => [fpOf(e.wf), e]));
         const picked = toImport
@@ -70,6 +83,8 @@ export function useWatchFolder(
       }
     } catch {
       // доступ потерян — оставляем тик, следующий может пройти
+    } finally {
+      polling.current = false;
     }
   }, []);
 
@@ -111,10 +126,7 @@ export function useWatchFolder(
 
   /** Клик по жёлтому чипу «возобновить» (жест для requestPermission). */
   const resume = useCallback(async () => {
-    const dir =
-      dirRef.current ??
-      ((await idbGet<WatchDirHandle>(DIR_KEY)) as WatchDirHandle | null) ??
-      null;
+    const dir = dirRef.current ?? (await idbGet<WatchDirHandle>(DIR_KEY)) ?? null;
     if (dir === null) {
       setStatus('off');
       return;
@@ -128,20 +140,26 @@ export function useWatchFolder(
 
   // автопродолжение после перезагрузки вкладки (если разрешение живо)
   useEffect(() => {
+    let cancelled = false; // размонтировали (блокировка) раньше, чем прочитали IndexedDB
     void (async () => {
-      const dir = (await idbGet<WatchDirHandle>(DIR_KEY)) as WatchDirHandle | null;
-      if (dir === null || dir.kind !== 'directory') return;
+      void idbDel(LEGACY_KNOWN_KEY);
+      const dir = await idbGet<WatchDirHandle>(DIR_KEY);
+      if (cancelled || dir === undefined || dir === null || dir.kind !== 'directory') return;
       const perm = await permissionOf(dir);
+      if (cancelled) return;
       if (perm === 'granted') {
         const saved = await idbGet<PersistedKnown>(KNOWN_KEY);
-        start(dir, saved);
+        if (!cancelled) start(dir, saved);
       } else {
         dirRef.current = dir;
         setFolderName(dir.name);
         setStatus('paused');
       }
     })();
-    return stopTimer;
+    return () => {
+      cancelled = true;
+      stopTimer();
+    };
   }, [start, stopTimer]);
 
   return { status, folderName, enable, disable, resume };
