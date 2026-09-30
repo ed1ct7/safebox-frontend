@@ -23,7 +23,10 @@ const handlers = (): EntryCardHandlers => ({
   onDropOn: vi.fn(),
 });
 
-function card(entry: Entry, extra: { caption?: string; matchedIn?: 'name' | 'description' | null } = {}) {
+function card(
+  entry: Entry,
+  extra: { caption?: string; snippet?: string; matchedIn?: 'name' | 'description' | null } = {},
+) {
   return render(
     <EntryCard entry={entry} selected={false} renaming={false} handlers={handlers()} {...extra} />,
   );
@@ -166,6 +169,66 @@ describe('EntryCard: теги (UF-16)', () => {
   it('пока каталог тегов не загружен, чипов нет и карточка не ломается', () => {
     tagCard(makeEntry({ name: 'кот.jpg', tags: tags(1) }));
     expect(screen.getByText('кот.jpg')).toBeInTheDocument();
+  });
+});
+
+describe('EntryCard: теги - клик (UF-18)', () => {
+  beforeEach(() => {
+    installFakeServer({ 'GET /api/v1/tags': () => ({ json: { categories: makeCategories() } }) });
+  });
+  afterEach(() => vi.unstubAllGlobals());
+
+  const tags = (...ids: number[]) => ids.map((tagId) => ({ tagId, inherit: false }));
+
+  it('клик по чипу тега зовёт onTagClick и не открывает карточку', async () => {
+    const user = userEvent.setup();
+    const h = { ...handlers(), onTagClick: vi.fn() };
+    render(<EntryCard entry={makeEntry({ tags: tags(1) })} selected={false} renaming={false} handlers={h} />, {
+      wrapper: makeWrapper().Wrapper,
+    });
+    await user.click(
+      await screen.findByRole('button', { name: 'Показать все записи с тегом «character: eris greyrat»' }),
+    );
+    expect(h.onTagClick).toHaveBeenCalledWith(1);
+    expect(h.onClick).not.toBeCalled();
+  });
+
+  it('без onTagClick чип - просто подпись с прежней подсказкой', async () => {
+    render(<EntryCard entry={makeEntry({ tags: tags(1) })} selected={false} renaming={false} handlers={handlers()} />, {
+      wrapper: makeWrapper().Wrapper,
+    });
+    expect(await screen.findByTitle('character: eris greyrat')).toBeInTheDocument();
+    expect(screen.queryByRole('button', { name: /Показать все записи/ })).toBeNull();
+  });
+
+  it('«+N» с onOpenTags - кнопка, показывает все теги записи', async () => {
+    const user = userEvent.setup();
+    const h = { ...handlers(), onOpenTags: vi.fn() };
+    render(
+      <EntryCard
+        entry={makeEntry({ tags: tags(5, 2, 1), inheritedTags: [{ tagId: 1, fromId: 9 }] })}
+        selected={false}
+        renaming={false}
+        handlers={h}
+      />,
+      { wrapper: makeWrapper().Wrapper },
+    );
+    await user.click(await screen.findByRole('button', { name: 'Все теги записи (1 скрыто)' }));
+    expect(h.onOpenTags).toHaveBeenCalledTimes(1);
+    expect(h.onClick).not.toBeCalled();
+  });
+});
+
+describe('EntryCard: сниппет описания в результатах', () => {
+  it('первая строка описания показывается под подписью', () => {
+    card(makeEntry({ description: 'Рыжий кот\nна диване' }), { snippet: 'Рыжий кот' });
+    expect(screen.getByText('Рыжий кот')).toBeInTheDocument();
+    expect(screen.queryByText(/на диване/)).toBeNull();
+  });
+
+  it('вне результатов (без snippet) описание не дублируется', () => {
+    card(makeEntry({ description: 'Рыжий кот' }));
+    expect(screen.queryByText('Рыжий кот')).toBeNull();
   });
 });
 

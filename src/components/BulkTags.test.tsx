@@ -76,7 +76,7 @@ describe('BulkTagsButton', () => {
     server.routes['POST /api/v1/tags'] = () => ({ status: 201, json: { id: 11, categoryId: 30, name: 'Рим' } });
     const { popover, user } = await open();
     await user.type(within(popover).getByRole('combobox'), 'место:Рим{Enter}');
-    await user.click(await screen.findByRole('button', { name: 'Создать' }));
+    await user.click(await screen.findByRole('button', { name: /Создать тег/ }));
     await waitFor(() => expect(assignCalls()).toHaveLength(1));
     expect(server.callsTo('POST', '/api/v1/tags')[0]?.body).toEqual({
       category: 'место',
@@ -95,7 +95,9 @@ describe('BulkTagsButton', () => {
 
   it('Esc (поле пусто) и клик мимо закрывают поповер', async () => {
     const { user } = await open();
-    await user.keyboard('{Escape}');
+    await user.keyboard('{Escape}'); // поле с фокусом: сначала закрываются подсказки
+    expect(screen.queryByRole('listbox')).toBeNull();
+    await user.keyboard('{Escape}'); // теперь сам поповер
     expect(screen.queryByRole('group', { name: 'Теги выделенных записей' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Теги…' }));
     await screen.findByRole('group', { name: 'Теги выделенных записей' });

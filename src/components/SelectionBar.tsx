@@ -1,13 +1,15 @@
 import type { Entry } from '../api/types';
 import { BulkTagsButton } from './BulkTags';
 
-/** UF-9: панель массовых действий при выделении. Переименовать — только одно. */
+/** UF-9: панель массовых действий при выделении. Переименовать — только одно;
+ * «Различить имена» — двум и более: одинаковым именам приписки « (2)», « (3)»…. */
 export function SelectionBar({
   entries,
   count,
   canDownload,
   onDownload,
   onRename,
+  onUniqueNames,
   onMove,
   onProperties,
   onDelete,
@@ -18,6 +20,8 @@ export function SelectionBar({
   canDownload: boolean; // в выделении есть что скачивать (у ссылок нечего)
   onDownload: () => void;
   onRename: () => void;
+  /** одинаковым именам выделения добавить приписки, как в проводнике */
+  onUniqueNames: () => void;
   onMove: () => void;
   onProperties: () => void;
   onDelete: () => void;
@@ -43,6 +47,15 @@ export function SelectionBar({
         onClick={onRename}
       >
         Переименовать
+      </button>
+      <button
+        type="button"
+        className={btn}
+        disabled={count < 2}
+        title="Одинаковым именам добавить приписки « (2)», « (3)»… как в проводнике Windows"
+        onClick={onUniqueNames}
+      >
+        Различить имена
       </button>
       <button type="button" className={btn} onClick={onMove}>
         Переместить…

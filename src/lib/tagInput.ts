@@ -23,8 +23,14 @@ export function completionText(tag: Pick<CatalogTag, 'category' | 'name'>): stri
   return `${tag.category}:${tag.name}`;
 }
 
-/** Создать тег name в категории category (newCategory - категории ещё нет и нужно подтверждение). */
-export interface CreatePlan {
+/** Создать тег name; category=null - категорию ещё не выбрали (как в менеджерах тегов:
+ * вводится только имя, категорию кликают в панели создания, а не печатают). */
+export type CreatePlan =
+  | { category: null; name: string; newCategory: false }
+  | ResolvedCreatePlan;
+
+/** План после выбора категории - то, что поле отправляет в onCreate. */
+export interface ResolvedCreatePlan {
   category: string;
   name: string;
   newCategory: boolean;
@@ -56,8 +62,9 @@ const DEFAULT_LIMIT = 50;
 /**
  * Подсказки по тексту. Без «:» ищем по имени тега и по названию категории, с «:» -
  * категория слева, тег справа (обе части - подстрока, без учёта регистра, «ё» = «е»).
- * Точные совпадения и начала имён - выше. Создание предлагается только с «:» и
- * только если такого тега ещё нет: без категории тегов не бывает.
+ * Точные совпадения и начала имён - выше. Создание - как в менеджерах тегов: для
+ * голого имени «Создать тег «имя»» с выбором категории кликом (category=null);
+ * «категория:тег» тоже создаёт, категория тогда берётся из ввода.
  */
 export function suggestTags(catalog: TagCatalog, text: string, opts: SuggestOptions): Suggestions {
   const { allowCreate, exclude, limit = DEFAULT_LIMIT } = opts;
@@ -98,29 +105,35 @@ export function suggestTags(catalog: TagCatalog, text: string, opts: SuggestOpti
   scored.sort((a, b) => a.score - b.score || compare(a.cat, b.cat) || compare(a.name, b.name));
   result.tags = scored.slice(0, limit).map((s) => s.tag);
 
-  if (allowCreate && parsed.category !== null && nameQ !== '' && exact === undefined) {
-    const problem =
-      parsed.category === ''
-        ? NEED_CATEGORY_HINT
-        : (validateTagName(parsed.category, 'категории') ?? validateTagName(parsed.name));
+  // создание (как в менеджерах тегов: имя вводят, категорию потом выбирают кликом).
+  // «категория:тег» по-прежнему работает - но как ярлык, а не обязательный путь
+  if (allowCreate && nameQ !== '' && exact === undefined) {
+    const problem = validateTagName(parsed.name);
     if (problem !== null) {
-      result.error = problem;
+      result.error = problem; // и для голого имени: Enter молча ничего не сделает - скажем почему
+    } else if (parsed.category === null) {
+      result.create = { category: null, name: parsed.name, newCategory: false };
+    } else if (parsed.category === '') {
+      result.error = NEED_CATEGORY_HINT;
     } else {
-      const category = findCategory(catalog, parsed.category);
-      result.create = {
-        category: category?.name ?? parsed.category,
-        name: parsed.name,
-        newCategory: category === undefined,
-      };
+      const categoryProblem = validateTagName(parsed.category, 'категории');
+      if (categoryProblem !== null) result.error = categoryProblem;
+      else {
+        const category = findCategory(catalog, parsed.category);
+        result.create = {
+          category: category?.name ?? parsed.category,
+          name: parsed.name,
+          newCategory: category === undefined,
+        };
+      }
     }
   }
 
   if (result.tags.length === 0 && alreadyChosen > 0) {
     result.hint = ALREADY_HINT;
   } else if (result.tags.length === 0 && result.create === null && result.error === null) {
-    if (text.trim() === '') result.hint = allowCreate ? 'Тегов пока нет. Введите категория:тег' : 'Тегов пока нет';
+    if (text.trim() === '') result.hint = allowCreate ? 'Тегов пока нет. Введите имя тега' : 'Тегов пока нет';
     else if (!allowCreate) result.hint = NO_TAG_HINT;
-    else if (catQ === null) result.hint = NEED_CATEGORY_HINT;
   }
   return result;
 }

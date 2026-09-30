@@ -153,11 +153,11 @@ describe('TagsSection: добавление', () => {
     expect(assignCalls()[0]?.body).toEqual({ ids: [7], add: [{ tagId: 5, inherit: true }] });
   });
 
-  it('уже висящий тег не предлагается повторно', async () => {
+  it('уже висящий тег не предлагается повторно (но «Создать тег …» остаётся)', async () => {
     const { region, user } = await setup();
     await user.type(within(region).getByRole('combobox', { name: 'Добавить тег' }), 'eris');
     await screen.findByText('Этот тег уже добавлен');
-    expect(screen.queryByRole('option')).toBeNull();
+    expect(screen.getByRole('option', { name: 'Создать тег eris…' })).toBeInTheDocument();
   });
 
   it('нет тега в существующей категории: POST /tags, потом add', async () => {
@@ -170,15 +170,16 @@ describe('TagsSection: добавление', () => {
     expect(assignCalls()[0]?.body).toEqual({ ids: [7], add: [{ tagId: 9, inherit: false }] });
   });
 
-  it('нет и категории: подтверждение, потом POST /tags с createCategory: true и add', async () => {
+  it('нет и категории: панель с вписанной категорией, потом POST /tags с createCategory: true и add', async () => {
     server.routes['POST /api/v1/tags'] = () => ({ status: 201, json: { id: 11, categoryId: 30, name: 'Рим' } });
     const { region, user } = await setup(makeEntry({ id: 7 }));
     await user.click(within(region).getByRole('checkbox', { name: 'Наследуется' }));
     await user.type(within(region).getByRole('combobox', { name: 'Добавить тег' }), 'место:Рим');
     await user.click(await screen.findByRole('option', { name: 'Создать категорию место и тег Рим' }));
-    expect(await screen.findByText('Создать категорию место и тег Рим?')).toBeInTheDocument();
-    expect(server.callsTo('POST', '/api/v1/tags')).toHaveLength(0); // без подтверждения ничего не создано
-    await user.click(screen.getByRole('button', { name: 'Создать' }));
+    const panel = await screen.findByRole('group', { name: 'Категория нового тега' });
+    expect(within(panel).getByRole('textbox', { name: 'Новая категория' })).toHaveValue('место');
+    expect(server.callsTo('POST', '/api/v1/tags')).toHaveLength(0); // без «Создать» ничего не создано
+    await user.click(within(panel).getByRole('button', { name: /Создать тег/ }));
     await waitFor(() => expect(assignCalls()).toHaveLength(1));
     expect(server.callsTo('POST', '/api/v1/tags')[0]?.body).toEqual({
       category: 'место',

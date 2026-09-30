@@ -75,11 +75,17 @@ describe('suggestTags: текст без «:»', () => {
     expect(ids('eris', { allowCreate: true, exclude: new Set([6]) })).toEqual([1]);
   });
 
-  it('совпадений нет - подсказка про категорию, а не «создать»', () => {
+  it('совпадений нет - «Создать тег …»: категорию выберут в панели (category=null)', () => {
     const r = suggestTags(catalog, 'zzz', create);
     expect(r.tags).toEqual([]);
-    expect(r.create).toBeNull();
-    expect(r.hint).toBe(NEED_CATEGORY_HINT);
+    expect(r.create).toEqual({ category: null, name: 'zzz', newCategory: false });
+    expect(r.hint).toBeNull();
+    expect(r.error).toBeNull();
+  });
+
+  it('голое имя с плохим символом или длиной - ошибка, без варианта создания', () => {
+    expect(suggestTags(catalog, `${'я'.repeat(101)}`, create).error).toMatch(/длиннее 100/);
+    expect(suggestTags(catalog, 'a\u0001b', create).error).toMatch(/Управляющие/);
   });
 
   it('в фильтре вместо подсказки про категорию - «такого тега нет»', () => {

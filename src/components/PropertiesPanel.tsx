@@ -52,6 +52,7 @@ function EntryDetails({
   onSave,
   sourceNames,
   onOpenSource,
+  onFilterTag,
   focusTags,
   onTagsFocused,
 }: {
@@ -59,6 +60,7 @@ function EntryDetails({
   onSave: (id: number, patch: EntryPatch) => Promise<void>;
   sourceNames: ReadonlyMap<number, string>;
   onOpenSource: (id: number) => void;
+  onFilterTag?: (tagId: number) => void;
   focusTags: boolean;
   onTagsFocused: () => void;
 }) {
@@ -106,6 +108,7 @@ function EntryDetails({
         entry={entry}
         sourceNames={sourceNames}
         onOpenSource={onOpenSource}
+        onFilterTag={onFilterTag}
         focusRequested={focusTags}
         onFocused={onTagsFocused}
       />
@@ -114,7 +117,8 @@ function EntryDetails({
 }
 
 /**
- * Панель свойств справа (UF-22): не модалка, следует за выделением. Имя, адрес
+ * Панель свойств слева от галереи (UF-22): не модалка, следует за выделением -
+ * теги, описание и реквизиты открытой записи видны рядом с ней. Имя, адрес
  * ссылки, описание и теги правятся на месте (EditableField, TagsSection).
  * Закрывается кнопкой ✕ или Esc (обрабатывает MainShell).
  * sourceNames и onOpenSource - для унаследованных тегов (имя и переход к записи,
@@ -126,6 +130,7 @@ export function PropertiesPanel({
   onClose,
   sourceNames = NO_NAMES,
   onOpenSource = noop,
+  onFilterTag,
   focusTagsFor = null,
   onTagsFocused = noop,
 }: {
@@ -134,6 +139,8 @@ export function PropertiesPanel({
   onClose: () => void;
   sourceNames?: ReadonlyMap<number, string>;
   onOpenSource?: (id: number) => void;
+  /** клик по тегу записи - фильтр по нему на весь сейф */
+  onFilterTag?: (tagId: number) => void;
   focusTagsFor?: number | null;
   onTagsFocused?: () => void;
 }) {
@@ -161,6 +168,7 @@ export function PropertiesPanel({
         onSave={onSave}
         sourceNames={sourceNames}
         onOpenSource={onOpenSource}
+        onFilterTag={onFilterTag}
         focusTags={focusTagsFor === single.id}
         onTagsFocused={onTagsFocused}
       />
@@ -170,7 +178,7 @@ export function PropertiesPanel({
   return (
     <aside
       aria-label="Свойства"
-      className="w-80 shrink-0 overflow-y-auto border-l border-zinc-800 bg-zinc-950 p-4 pb-20"
+      className="w-80 shrink-0 overflow-y-auto border-r border-zinc-800 bg-zinc-950 p-4 pb-20"
     >
       <div className="mb-3 flex items-center justify-between">
         <h2 className="text-sm font-medium text-zinc-100">

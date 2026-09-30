@@ -3,6 +3,7 @@ import { useQuery } from '@tanstack/react-query';
 import { createSafe, getSafeStatus, unlockSafe } from '../api/endpoints';
 import type { Session } from '../api/types';
 import { ApiRequestError, errorMessage } from '../api/client';
+import { forgetSafe, loadRecentSafes, rememberSafe } from '../lib/recentSafes';
 import { validateNewPassword } from '../lib/rules';
 import { useToast } from './Toasts';
 
@@ -11,10 +12,19 @@ type Mode = 'open' | 'create';
 const inputClass =
   'w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 placeholder-zinc-600 outline-none focus:border-accent';
 
+const BASENAME_RE = /[/\\]/;
+
+/** «сейф.safebox» из пути; если что - сам путь. */
+function safeName(path: string): string {
+  const parts = path.split(BASENAME_RE).filter((p) => p !== '');
+  return parts.at(-1) ?? path;
+}
+
 /**
  * Экран входа: «Открыть» (UF-2) и «Создать новый» (UF-1). Путь последнего
- * сейфа подставляется; если сейфов ещё не было — сразу вкладка «Создать».
- * Ошибки формы (неверный пароль, файл существует, не сейф…) — на форме,
+ * сейфа подставляется, под полем — список последних сейфов (клик подставляет
+ * путь); если сейфов ещё не было — сразу вкладка «Создать». Ошибки формы
+ * (неверный пароль, файл существует, не сейф…) — на форме,
  * нет соединения с сервером — тостом.
  */
 export function LoginScreen({ onSession }: { onSession: (s: Session) => void }) {
@@ -30,6 +40,7 @@ export function LoginScreen({ onSession }: { onSession: (s: Session) => void }) 
   const [confirm, setConfirm] = useState('');
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [recents, setRecents] = useState<string[]>(() => loadRecentSafes());
   const openPathTouched = useRef(false);
   const prefillDone = useRef(false);
   const passwordRef = useRef<HTMLInputElement>(null);
@@ -39,9 +50,13 @@ export function LoginScreen({ onSession }: { onSession: (s: Session) => void }) 
     prefillDone.current = true;
     if (status.lastPath === null) {
       setMode('create');
-    } else if (!openPathTouched.current) {
-      setOpenPath(status.lastPath);
-      passwordRef.current?.focus(); // путь известен — сразу вводим пароль
+    } else {
+      // последний сейф сервера - тоже часть истории: первым в списке
+      setRecents((r) => (r.some((p) => p.toLowerCase() === status.lastPath?.toLowerCase()) ? r : [status.lastPath ?? '', ...r].filter(Boolean)));
+      if (!openPathTouched.current) {
+        setOpenPath(status.lastPath);
+        passwordRef.current?.focus(); // путь известен — сразу вводим пароль
+      }
     }
   }, [status]);
 
@@ -78,6 +93,7 @@ export function LoginScreen({ onSession }: { onSession: (s: Session) => void }) 
         mode === 'create'
           ? await createSafe(trimmed, password, confirm)
           : await unlockSafe(trimmed, password);
+      rememberSafe(trimmed); // в следующий раз - из списка, без пути руками
       onSession(session);
     } catch (e) {
       if (e instanceof ApiRequestError && e.code === 'network') {
@@ -176,6 +192,47 @@ export function LoginScreen({ onSession }: { onSession: (s: Session) => void }) 
                   : 'Расширение .safebox можно не писать'}
                 {defaultDir !== '' && ` · относительный путь — от ${defaultDir}`}
               </span>
+
+              {mode === 'open' && recents.length > 0 && (
+                <div className="mt-1.5">
+                  <p className="mb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
+                    Последние сейфы
+                  </p>
+                  <ul aria-label="Последние сейфы" className="flex flex-col gap-0.5">
+                    {recents.map((p) => (
+                      <li key={p} className="flex items-center gap-1">
+                        <button
+                          type="button"
+                          title={p}
+                          className="flex min-w-0 flex-1 items-center gap-2 rounded-lg px-2 py-1.5 text-left transition hover:bg-zinc-800/70"
+                          onClick={() => {
+                            openPathTouched.current = true;
+                            setOpenPath(p);
+                            setError(null);
+                            passwordRef.current?.focus();
+                          }}
+                        >
+                          <span aria-hidden="true">🗄</span>
+                          <span className="min-w-0 truncate text-sm text-zinc-200">{safeName(p)}</span>
+                          <span className="min-w-0 flex-1 truncate text-xs text-zinc-600">{p}</span>
+                        </button>
+                        <button
+                          type="button"
+                          aria-label={`Убрать «${p}» из списка`}
+                          title="Убрать из списка"
+                          className="shrink-0 rounded p-1 text-zinc-600 transition hover:bg-zinc-800 hover:text-zinc-300"
+                          onClick={() => {
+                            forgetSafe(p);
+                            setRecents((r) => r.filter((x) => x !== p));
+                          }}
+                        >
+                          ✕
+                        </button>
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              )}
             </div>
 
             <label className="flex flex-col gap-1.5">

@@ -79,19 +79,19 @@ function cardOf(name: string): HTMLElement {
   return el;
 }
 
-/** Открыть фильтр в верхней панели и выбрать теги по подстроке ввода. */
+/** Открыть панель фильтра справа и выбрать теги по подстроке ввода. */
 async function pickFilterTags(user: ReturnType<typeof userEvent.setup>, ...inputs: string[]) {
-  const dialog =
-    screen.queryByRole('dialog', { name: 'Фильтр по тегам' }) ??
+  const panel =
+    screen.queryByRole('complementary', { name: 'Фильтр по тегам' }) ??
     (await (async () => {
       await user.click(screen.getByRole('button', { name: /^Фильтр/ }));
-      return screen.findByRole('dialog', { name: 'Фильтр по тегам' });
+      return screen.findByRole('complementary', { name: 'Фильтр по тегам' });
     })());
   for (const input of inputs) {
-    await user.type(within(dialog).getByRole('combobox', { name: 'Выбрать тег для фильтра' }), input);
-    await user.click(await screen.findByRole('option'));
+    await user.type(within(panel).getByRole('combobox', { name: 'Выбрать тег для фильтра' }), input);
+    await user.click(await within(panel).findByRole('option'));
   }
-  return dialog;
+  return panel;
 }
 
 beforeEach(() => {
@@ -117,8 +117,8 @@ afterEach(() => {
 describe('теги на карточках и в панели свойств', () => {
   it('карточки показывают свои теги маленькими чипами', async () => {
     await renderShell();
-    expect(await within(cardOf('кот.jpg')).findByTitle('character: eris greyrat')).toBeInTheDocument();
-    expect(await within(cardOf('Пример')).findByTitle('language: ru')).toBeInTheDocument();
+    expect(await within(cardOf('кот.jpg')).findByTitle(/character: eris greyrat/)).toBeInTheDocument();
+    expect(await within(cardOf('Пример')).findByTitle(/language: ru/)).toBeInTheDocument();
   });
 
   it('«Теги…» в меню карточки открывает панель свойств с фокусом в поле тегов', async () => {
@@ -164,6 +164,28 @@ describe('теги на карточках и в панели свойств', (
       ids: [1, 2],
       add: [{ tagId: 2, inherit: false }],
     });
+  });
+
+  it('клик по чипу тега на карточке: фильтр по нему на весь сейф, панель фильтра открыта', async () => {
+    const user = await renderShell();
+    await user.click(
+      within(cardOf('кот.jpg')).getByRole('button', { name: 'Показать все записи с тегом «character: eris greyrat»' }),
+    );
+    await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1'));
+    expect(lastSearch()?.get('match')).toBe('categories');
+    const panel = screen.getByRole('complementary', { name: 'Фильтр по тегам' });
+    expect(within(panel).getByRole('list', { name: 'Выбранные теги' })).toHaveTextContent('character: eris greyrat');
+    expect(await screen.findByText(/Фильтр: character: eris greyrat/)).toBeInTheDocument();
+  });
+
+  it('клик по тегу в панели свойств - тот же фильтр', async () => {
+    const user = await renderShell();
+    fireEvent.contextMenu(cardOf('кот.jpg'));
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Теги…' }));
+    const panel = await screen.findByRole('complementary', { name: 'Свойства' });
+    await user.click(within(panel).getByRole('button', { name: 'character: eris greyrat' }));
+    await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1'));
+    expect(screen.getByRole('complementary', { name: 'Фильтр по тегам' })).toBeInTheDocument();
   });
 });
 
@@ -259,7 +281,7 @@ describe('фильтр по тегам (UF-18)', () => {
     const user = await renderShell();
     await pickFilterTags(user, 'eris');
     await screen.findByText(/Фильтр: /);
-    await user.keyboard('{Escape}'); // закрыл поповер
+    await user.keyboard('{Escape}'); // закрыл панель фильтра
     await user.keyboard('{Escape}'); // сбросил фильтр
     expect(screen.queryByText(/Фильтр: /)).toBeNull();
   });
@@ -275,6 +297,116 @@ describe('фильтр по тегам (UF-18)', () => {
     await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1'));
     await user.click(screen.getByRole('button', { name: /Назад/ }));
     expect(await screen.findByText(/Фильтр: character: eris greyrat$/)).toBeInTheDocument();
+  });
+});
+
+describe('каталог тегов в левой колонке', () => {
+  function sidebar(): HTMLElement {
+    return screen.getByRole('region', { name: 'Каталог тегов' });
+  }
+
+  it('категории и теги со счётчиками видны под деревом папок', async () => {
+    await renderShell();
+    expect(await within(sidebar()).findByRole('button', { name: 'eris greyrat 3' })).toBeInTheDocument();
+    expect(within(sidebar()).getByRole('button', { name: 'ru 4' })).toBeInTheDocument();
+    expect(within(sidebar()).getByText('character')).toBeInTheDocument();
+    expect(within(sidebar()).getByText('language')).toBeInTheDocument();
+  });
+
+  it('клик по тегу включает фильтр и открывает панель справа, второй тег добавляется', async () => {
+    const user = await renderShell();
+    await user.click(await within(sidebar()).findByRole('button', { name: 'eris greyrat 3' }));
+    await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1'));
+    const panel = screen.getByRole('complementary', { name: 'Фильтр по тегам' });
+    expect(within(panel).getByRole('list', { name: 'Выбранные теги' })).toHaveTextContent('character: eris greyrat');
+    await user.click(within(sidebar()).getByRole('button', { name: 'ru 4' }));
+    await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1,5'));
+  });
+
+  it('повторный клик по выбранному тегу убирает его из фильтра', async () => {
+    const user = await renderShell();
+    await user.click(await within(sidebar()).findByRole('button', { name: 'eris greyrat 3' }));
+    await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1'));
+    await user.click(within(sidebar()).getByRole('button', { name: 'eris greyrat 3' }));
+    // фильтр опустел - галерея вернулась к обычному виду папки
+    await waitFor(() => expect(screen.getByRole('navigation', { name: 'Путь' })).toBeInTheDocument());
+    expect(screen.queryByText(/Фильтр: /)).toBeNull();
+  });
+
+  it('⚙ открывает экран управления тегами', async () => {
+    const user = await renderShell();
+    await user.click(await within(sidebar()).findByRole('button', { name: 'Управление тегами' }));
+    expect(await screen.findByRole('region', { name: 'Управление тегами' })).toBeInTheDocument();
+  });
+});
+
+describe('теги в просмотрщике (фото на весь экран)', () => {
+  const dog = makeEntry({ id: 6, kind: 'photo', name: 'пёс.jpg', tags: [{ tagId: 5, inherit: false }] });
+
+  async function openViewer(): Promise<ReturnType<typeof userEvent.setup>> {
+    server.routes['GET /api/v1/entries'] = () => ({
+      json: { ...rootListing, entries: [folder, photo, dog, link] },
+    });
+    const user = await renderShell();
+    fireEvent.click(cardOf('кот.jpg'));
+    await screen.findByRole('dialog', { name: 'Просмотр фото' });
+    return user;
+  }
+
+  it('панель слева открывается вместе с фото: теги записи, поле добавления, описание', async () => {
+    await openViewer();
+    const panel = screen.getByRole('complementary', { name: 'Теги записи' });
+    expect(within(panel).getByRole('combobox', { name: 'Добавить тег' })).toBeInTheDocument();
+    expect(within(panel).getByRole('button', { name: 'Снять тег «character: eris greyrat»' })).toBeInTheDocument();
+    expect(within(panel).getByLabelText('Описание')).toBeInTheDocument();
+  });
+
+  it('тег добавляется прямо из просмотрщика', async () => {
+    const user = await openViewer();
+    const panel = screen.getByRole('complementary', { name: 'Теги записи' });
+    await user.type(within(panel).getByRole('combobox', { name: 'Добавить тег' }), 'language:ru{Enter}');
+    await waitFor(() => expect(server.callsTo('POST', '/api/v1/entries/tags')).toHaveLength(1));
+    expect(server.callsTo('POST', '/api/v1/entries/tags')[0]?.body).toEqual({
+      ids: [1],
+      add: [{ tagId: 5, inherit: false }],
+    });
+  });
+
+  it('описание правится не выходя из просмотра', async () => {
+    server.routes['PATCH /api/v1/entries/1'] = () => ({ json: photo });
+    const user = await openViewer();
+    const field = within(screen.getByRole('complementary', { name: 'Теги записи' })).getByLabelText('Описание');
+    await user.type(field, 'Рыжий');
+    await user.tab();
+    await waitFor(() => expect(server.callsTo('PATCH', '/api/v1/entries/1')).toHaveLength(1));
+    expect(server.callsTo('PATCH', '/api/v1/entries/1')[0]?.body).toEqual({ description: 'Рыжий' });
+  });
+
+  it('✕ прячет панель, 🏷 возвращает; просмотрщик при этом не закрывается', async () => {
+    const user = await openViewer();
+    await user.click(screen.getByRole('button', { name: 'Скрыть панель тегов' }));
+    expect(screen.queryByRole('complementary', { name: 'Теги записи' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
+    await user.click(screen.getByRole('button', { name: 'Показать панель тегов' }));
+    expect(screen.getByRole('complementary', { name: 'Теги записи' })).toBeInTheDocument();
+  });
+
+  it('стрелки листают фото - панель показывает теги следующего', async () => {
+    const user = await openViewer();
+    await user.click(screen.getByRole('button', { name: 'Следующее фото (→)' }));
+    const panel = screen.getByRole('complementary', { name: 'Теги записи' });
+    expect(await within(panel).findByRole('button', { name: 'Снять тег «language: ru»' })).toBeInTheDocument();
+    expect(within(panel).queryByRole('button', { name: 'Снять тег «character: eris greyrat»' })).toBeNull();
+  });
+
+  it('Esc в поле тегов закрывает подсказки, но не просмотрщик', async () => {
+    const user = await openViewer();
+    const panel = screen.getByRole('complementary', { name: 'Теги записи' });
+    await user.click(within(panel).getByRole('combobox', { name: 'Добавить тег' }));
+    await within(panel).findByRole('listbox');
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('listbox')).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
   });
 });
 

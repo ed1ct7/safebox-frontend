@@ -52,6 +52,10 @@ export interface EntryCardHandlers {
   onDropOn: (entry: Entry) => void;
   /** ссылка из браузера брошена на карточку - станет её вложением (UF-20) */
   onDropLink?: (entry: Entry, dt: DataTransfer) => void;
+  /** клик по чипу тега - фильтр по этому тегу на весь сейф (UF-18) */
+  onTagClick?: (tagId: number) => void;
+  /** «+N» тегов - открыть свойства записи с фокусом в поле тегов */
+  onOpenTags?: (entry: Entry) => void;
 }
 
 /**
@@ -59,12 +63,15 @@ export interface EntryCardHandlers {
  * подпись, размер/домен, бейдж типа и число вложений. У ссылки - картинка
  * предпросмотра, домен и первая строка описания, пока предпросмотр грузится
  * (previewPending) - индикатор (UF-21). Теги (UF-16): первые три
- * (прямые, потом бледные унаследованные) и «+N». memo: при выделении
+ * (прямые, потом бледные унаследованные) и «+N»; чип кликабелен - фильтр по
+ * тегу, «+N» открывает все теги записи. В результатах поиска/фильтра под
+ * подписью - первая строка описания (snippet). memo: при выделении
  * перерисовываются только карточки, чьё состояние изменилось.
  */
 export const EntryCard = memo(function EntryCard({
   entry,
   caption,
+  snippet,
   matchedIn,
   selected,
   renaming,
@@ -73,6 +80,8 @@ export const EntryCard = memo(function EntryCard({
 }: {
   entry: Entry;
   caption?: string;
+  /** первая строка описания в результатах поиска/фильтра */
+  snippet?: string;
   matchedIn?: SearchHit['matchedIn'];
   selected: boolean;
   renaming: boolean;
@@ -98,6 +107,7 @@ export const EntryCard = memo(function EntryCard({
 
   return (
     <div
+      data-entry-id={entry.id}
       className={`group relative flex cursor-pointer select-none flex-col rounded-xl border bg-zinc-900/60 transition ${
         drop.over
           ? 'border-accent bg-accent/10 ring-2 ring-accent'
@@ -209,30 +219,67 @@ export const EntryCard = memo(function EntryCard({
           )}
           <span className="min-w-0 truncate">{caption ?? captionOf(entry)}</span>
         </div>
+        {snippet !== undefined && snippet !== '' && (
+          <div className="mt-0.5 truncate text-xs text-zinc-400">{snippet}</div>
+        )}
         {description !== '' && <div className="truncate text-xs text-zinc-400">{description}</div>}
         {chips.length > 0 && (
           <div className="mt-1.5 flex flex-wrap gap-1" aria-label="Теги">
-            {chips.map((chip) => (
-              <span
-                key={chip.tagId}
-                title={chip.inherited ? `${chip.title} (унаследован)` : chip.title}
-                className={`max-w-full truncate rounded-full border px-1.5 text-[10px] leading-4 ${
-                  chip.inherited
-                    ? 'border-zinc-800 text-zinc-600'
-                    : 'border-zinc-700 bg-zinc-800/80 text-zinc-300'
-                }`}
-              >
-                {chip.name}
-              </span>
-            ))}
-            {more > 0 && (
-              <span
-                title={`Ещё тегов: ${more}`}
-                className="rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500"
-              >
-                +{more}
-              </span>
-            )}
+            {chips.map((chip) => {
+              const cls = `max-w-full truncate rounded-full border px-1.5 text-[10px] leading-4 ${
+                chip.inherited
+                  ? 'border-zinc-800 text-zinc-600'
+                  : 'border-zinc-700 bg-zinc-800/80 text-zinc-300'
+              }`;
+              if (handlers.onTagClick === undefined) {
+                return (
+                  <span
+                    key={chip.tagId}
+                    title={chip.inherited ? `${chip.title} (унаследован)` : chip.title}
+                    className={cls}
+                  >
+                    {chip.name}
+                  </span>
+                );
+              }
+              return (
+                <button
+                  key={chip.tagId}
+                  type="button"
+                  title={`${chip.inherited ? `${chip.title} (унаследован)` : chip.title} — показать все записи с этим тегом`}
+                  aria-label={`Показать все записи с тегом «${chip.title}»`}
+                  className={`${cls} cursor-pointer transition hover:border-accent hover:text-zinc-100`}
+                  onClick={(e) => {
+                    e.stopPropagation(); // клик по чипу не открывает саму карточку
+                    handlers.onTagClick?.(chip.tagId);
+                  }}
+                >
+                  {chip.name}
+                </button>
+              );
+            })}
+            {more > 0 &&
+              (handlers.onOpenTags === undefined ? (
+                <span
+                  title={`Ещё тегов: ${more}`}
+                  className="rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500"
+                >
+                  +{more}
+                </span>
+              ) : (
+                <button
+                  type="button"
+                  title={`Ещё тегов: ${more} — показать все теги записи`}
+                  aria-label={`Все теги записи (${more} скрыто)`}
+                  className="cursor-pointer rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500 transition hover:border-accent hover:text-zinc-100"
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    handlers.onOpenTags?.(entry);
+                  }}
+                >
+                  +{more}
+                </button>
+              ))}
           </div>
         )}
       </div>

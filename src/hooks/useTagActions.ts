@@ -12,7 +12,7 @@ import {
 } from '../api/endpoints';
 import { invalidateTags } from '../api/queries';
 import type { TagRef } from '../api/types';
-import type { CreatePlan } from '../lib/tagInput';
+import type { ResolvedCreatePlan } from '../lib/tagInput';
 
 /**
  * Мутации тегов (UF-16, UF-17). После каждой - успешной или нет - обновляются
@@ -33,8 +33,9 @@ export function useTagActions() {
       /** add - повесить или обновить inherit, remove - снять; у всех ids разом */
       assign: (ids: number[], change: { add?: TagRef[]; remove?: number[] }) =>
         run(() => assignTags(ids, change)),
-      /** «Создать тег…» из поля ввода; новая категория - createCategory: true */
-      createTag: (plan: CreatePlan) =>
+      /** «Создать тег…» из поля ввода; новая категория - createCategory: true.
+       * Категория всегда выбрана: поле отправляет сюда план уже после панели выбора. */
+      createTag: (plan: ResolvedCreatePlan) =>
         run(() =>
           createTag({
             category: plan.category,

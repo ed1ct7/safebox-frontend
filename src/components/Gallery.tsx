@@ -7,6 +7,8 @@ export interface DisplayItem {
   entry: Entry;
   /** показывается вместо размера/домена: путь папки в результатах поиска */
   caption?: string;
+  /** первая строка описания в результатах поиска/фильтра */
+  snippet?: string;
   /** где нашлось: в описании помечаем на карточке (UF-8) */
   matchedIn?: SearchHit['matchedIn'];
   /** только что добавлена (UF-20): карточка подсвечена на пару секунд */
@@ -62,6 +64,7 @@ export function Gallery({
           key={item.entry.id}
           entry={item.entry}
           caption={item.caption}
+          snippet={item.snippet}
           matchedIn={item.matchedIn}
           selected={selection.has(item.entry.id)}
           renaming={renamingId === item.entry.id}

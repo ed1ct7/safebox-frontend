@@ -21,7 +21,7 @@ import {
   triggerDownloads,
 } from '../lib/dom';
 import { dragKind, filesFromDataTransfer, linkTextFromDataTransfer, pastedFile } from '../lib/dnd';
-import { deleteWarning, plural } from '../lib/format';
+import { deleteWarning, firstLine, plural } from '../lib/format';
 import { displayName } from '../lib/link';
 import type { MenuAction } from '../lib/menu';
 import { isNavKey } from '../lib/selection';
@@ -29,6 +29,8 @@ import { EMPTY_FILTER, filterSummary, isFilterActive, pruneFilterTags, searchOpt
 import type { TagFilter } from '../lib/tagFilter';
 import { pathNames } from '../lib/tags';
 import { folderAfterDelete } from '../lib/tree';
+import { planSuffixRename } from '../lib/uniqueNames';
+import type { NameChange } from '../lib/uniqueNames';
 import { useConflictPrompt } from '../hooks/useConflictPrompt';
 import { useEntryDnd } from '../hooks/useEntryDnd';
 import { useEvent, useWindowEvent } from '../hooks/useEvent';
@@ -36,6 +38,7 @@ import { useHeartbeat } from '../hooks/useHeartbeat';
 import { useImporter } from '../hooks/useImporter';
 import { useLinks } from '../hooks/useLinks';
 import { useMoveEntries } from '../hooks/useMoveEntries';
+import { useRubberBand } from '../hooks/useRubberBand';
 import { useSelection } from '../hooks/useSelection';
 import { TagCatalogProvider, useTagCatalog } from '../hooks/useTagCatalog';
 import { bumpThumbnail } from '../hooks/useThumbnailSrc';
@@ -58,6 +61,8 @@ import { PropertiesPanel } from './PropertiesPanel';
 import type { PropertiesTarget } from './PropertiesPanel';
 import { SelectionBar } from './SelectionBar';
 import { StatusBar } from './StatusBar';
+import { FilterPanel } from './TagFilter';
+import { TagSidebar } from './TagSidebar';
 import { TagsScreen } from './TagsScreen';
 import { TopBar } from './TopBar';
 import { useToast } from './Toasts';
@@ -72,7 +77,8 @@ type Viewer =
   | { kind: 'video'; entry: Entry }
   | { kind: 'link'; entry: Entry };
 
-/** Главное окно: дерево слева, крошки, поиск и фильтр сверху, сетка карточек в центре. */
+/** Главное окно: слева дерево и свойства записи, сверху крошки и поиск, в центре
+ * сетка карточек, справа - панель фильтра по тегам. */
 export function MainShell({ onLocked }: { onLocked: () => void }) {
   return (
     <TagCatalogProvider>
@@ -110,6 +116,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const [filter, setFilter] = useState<TagFilter>(EMPTY_FILTER);
   const isFilter = isFilterActive(filter);
   const showResults = isSearch || isFilter;
+  const [filterOpen, setFilterOpen] = useState(false); // панель фильтра справа
   const [tagsOpen, setTagsOpen] = useState(false);
 
   // тег удалили или слили - из фильтра он уходит (сервер на неизвестный id отвечает 422)
@@ -148,6 +155,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       entry: h.entry,
       caption: h.path.length > 0 ? h.path.map((p) => p.name).join(' / ') : 'Все объекты',
       matchedIn: h.matchedIn,
+      // в результатах видна и первая строка описания: «где слово» видно сразу
+      // (у ссылки описание уже есть на карточке - не дублируем)
+      snippet:
+        h.entry.kind !== 'link' && h.entry.description !== '' ? firstLine(h.entry.description) : undefined,
     }));
   }, [showResults, listing.data, search.data]);
 
@@ -161,9 +172,34 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const entries = useMemo(() => baseItems.map((d) => d.entry), [baseItems]);
   const visibleIds = useMemo(() => entries.map((e) => e.id), [entries]);
   const selection = useSelection(visibleIds);
-  const { clear: clearSelection, toggle: toggleSelect } = selection; // стабильные
+  const { clear: clearSelection, toggle: toggleSelect, replace: replaceSelection } = selection; // стабильные
 
   const refreshContent = useCallback(() => invalidateContent(qc), [qc]);
+
+  // ── Рамка выделения (UF-9, «как в проводнике») ────────────────────────────
+
+  const mainRef = useRef<HTMLElement>(null);
+  const selectedRef = useRef(selection.selected);
+  selectedRef.current = selection.selected;
+  const rubberCards = useCallback(
+    () =>
+      Array.from(mainRef.current?.querySelectorAll<HTMLElement>('[data-entry-id]') ?? []).map((el) => ({
+        id: Number(el.dataset.entryId),
+        el,
+      })),
+    [],
+  );
+  const rubber = useRubberBand({
+    // тот же «фон», что у клика-сброса: сам main и сетка между карточками
+    isBackground: (e) => {
+      const t = e.target as HTMLElement;
+      return t === e.currentTarget || t.dataset.gallery !== undefined;
+    },
+    getCards: rubberCards,
+    getBase: () => selectedRef.current,
+    onSelect: replaceSelection,
+    getViewport: () => mainRef.current, // автоскролл у кромок при протяжке
+  });
 
   // ── Состояние окна ────────────────────────────────────────────────────────
 
@@ -317,6 +353,45 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     }
   });
 
+  // ── Приписки одинаковым именам, «как в проводнике» ────────────────────────
+
+  const applyUniqueNames = useEvent(async (changes: NameChange[]) => {
+    let done = 0;
+    for (const c of changes) {
+      try {
+        await updateEntry(c.id, { name: c.to });
+        done += 1;
+      } catch (e) {
+        if (isUnauthorized(e)) return; // экран входа
+        toast(errorMessage(e, `Не удалось переименовать «${c.from}»`), 'error');
+        break; // не ломаем имена дальше по списку на полпути
+      }
+    }
+    if (done > 0) toast(`Переименовано: ${plural(done, 'запись', 'записи', 'записей')}`, 'success');
+    refreshContent();
+  });
+
+  const askUniqueNames = useEvent(() => {
+    // занятые имена - всё содержимое текущего вида, чтобы приписка ни с кем не столкнулась
+    const changes = planSuffixRename(selectedEntries, entries);
+    if (changes.length === 0) {
+      toast('Среди выделенных нет одинаковых имён', 'info');
+      return;
+    }
+    const preview = changes
+      .slice(0, 8)
+      .map((c) => `${c.from} → ${c.to}`)
+      .join('\n');
+    setConfirm({
+      title: `Различить имена: ${plural(changes.length, 'запись', 'записи', 'записей')}?`,
+      message:
+        `Одинаковым именам добавятся приписки, как в проводнике:\n${preview}` +
+        (changes.length > 8 ? `\n… и ещё ${changes.length - 8}` : ''),
+      confirmLabel: 'Переименовать',
+      onConfirm: () => void applyUniqueNames(changes),
+    });
+  });
+
   const lock = useEvent(async () => {
     setViewer(null); // закрыть видео: его Range-поток держит аренду сессии
     importer.cancelAll();
@@ -372,6 +447,12 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     setPropsOpen(true);
   });
 
+  // «+N» тегов на карточке: свойства записи с фокусом в поле тегов
+  const openCardTags = useEvent((entry: Entry) => {
+    openProperties(entry.id);
+    setFocusTagsFor(entry.id);
+  });
+
   // ── Теги (UF-16, UF-17, UF-18) ────────────────────────────────────────────
 
   // имена предков из крошек листинга и результатов: «от: <имя>» у унаследованных тегов
@@ -401,6 +482,24 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     setReveal(null);
   }, [reveal, showResults, listing.isPlaceholderData, listing.data, selectOnly]);
 
+  // теги/описание изменились - обновляем и снимки в открытом просмотрщике,
+  // чтобы панель слева показывала свежие теги (сами карточки обновляет запрос)
+  useEffect(() => {
+    const byId = new Map(entries.map((e) => [e.id, e]));
+    setViewer((v) => {
+      if (v === null) return v;
+      if (v.kind !== 'photos') {
+        const fresh = byId.get(v.entry.id);
+        return fresh !== undefined && fresh !== v.entry ? { ...v, entry: fresh } : v;
+      }
+      const photos = v.photos.map((p) => byId.get(p.id) ?? p);
+      if (photos.every((p, i) => p === v.photos[i])) return v;
+      const current = v.photos[v.index]?.id;
+      const index = Math.max(0, photos.findIndex((p) => p.id === current));
+      return { ...v, photos, index };
+    });
+  }, [entries]);
+
   // ── Создание ссылок (UF-20) ───────────────────────────────────────────────
 
   const freshTimer = useRef<ReturnType<typeof setTimeout>>();
@@ -423,13 +522,24 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     setRenamingId(null);
   });
 
-  // клик по тегу на экране «Теги»: фильтр по нему, весь сейф
+  // клик по тегу на экране «Теги», чипу карточки или панели свойств: фильтр по
+  // нему на весь сейф; панель фильтра открывается - видно, что выбрано
   const filterByTag = useEvent((tagId: number) => {
     setFilter((f) => ({ ...f, tags: [tagId], scope: 'vault' }));
     setSearchText('');
     setCommittedQuery('');
     setTagsOpen(false);
     setRenamingId(null);
+    setFilterOpen(true);
+  });
+
+  // тег в каталоге слева: добавить в фильтр или убрать (можно несколько)
+  const toggleFilterTag = useEvent((next: TagFilter) => {
+    setFilter(next);
+    setSearchText('');
+    setCommittedQuery('');
+    setRenamingId(null);
+    setFilterOpen(true);
   });
 
   // ── Ссылки (UF-6) ─────────────────────────────────────────────────────────
@@ -521,9 +631,11 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       },
       onDropLink: (entry: Entry, dt: DataTransfer) =>
         void links.addFromText(linkTextFromDataTransfer(dt), entry.id), // станет вложением записи
+      onTagClick: filterByTag, // чип тега на карточке - фильтр по нему
+      onOpenTags: openCardTags, // «+N» тегов - свойства с фокусом в поле тегов
       ...dnd.card,
     }),
-    [onCardClick, toggleSelect, onCardContextMenu, commitRename, dnd.card, links.addFromText],
+    [onCardClick, toggleSelect, onCardContextMenu, commitRename, dnd.card, links.addFromText, filterByTag, openCardTags],
   );
 
   // ── Клавиатура ────────────────────────────────────────────────────────────
@@ -535,9 +647,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     const ctrl = e.ctrlKey || e.metaKey;
 
     if (e.key === 'Escape') {
-      // сверху лежит панель свойств: сначала закрываем её, потом снимаем выделение
+      // сверху лежат панели: сначала закрываем их, потом снимаем выделение
       if (propsOpen) setPropsOpen(false);
       else if (selected.size > 0) selection.clear();
+      else if (filterOpen) setFilterOpen(false);
       else if (isSearch) setSearchText('');
       else if (isFilter) setFilter((f) => ({ ...f, tags: [] }));
     } else if (e.key === 'F2') {
@@ -559,7 +672,8 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       if (isInteractiveTarget(e.target) || selected.size !== 1) return;
       const entry = entries.find((en) => en.id === first);
       if (entry !== undefined) openEntry(entry);
-    } else if (ctrl && e.key.toLowerCase() === 'a') {
+    } else if (ctrl && (e.key.toLowerCase() === 'a' || e.code === 'KeyA')) {
+      // e.code - физическая клавиша: Ctrl+A работает и на русской раскладке (e.key = «ф»)
       e.preventDefault();
       selection.selectAll();
     } else if (!ctrl && isNavKey(e.key)) {
@@ -671,7 +785,8 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         }}
         filter={filter}
         filterSummary={isFilter ? filterSummary(filter, catalog, folderId) : null}
-        canScopeFolder={folderId !== null}
+        filterOpen={filterOpen}
+        onToggleFilter={() => setFilterOpen((open) => !open)}
         onFilterChange={changeFilter}
         tagsOpen={tagsOpen}
         onToggleTags={() => setTagsOpen((open) => !open)}
@@ -695,11 +810,35 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             onNavigate={navigate}
             dnd={dnd.tree}
           />
+          <TagSidebar
+            filter={filter}
+            onToggleTag={toggleFilterTag}
+            onManage={() => setTagsOpen(true)}
+          />
         </aside>
 
+        {propsOpen && (
+          <PropertiesPanel
+            target={propsTarget}
+            onSave={saveProperties}
+            onClose={() => setPropsOpen(false)}
+            sourceNames={sourceNames}
+            onOpenSource={(id) => void openSource(id)}
+            onFilterTag={filterByTag}
+            focusTagsFor={focusTagsFor}
+            onTagsFocused={() => setFocusTagsFor(null)}
+          />
+        )}
+
         <main
-          className="flex-1 overflow-y-auto p-4 pb-20"
+          ref={mainRef}
+          className={`flex-1 overflow-y-auto p-4 pb-20 ${rubber.box !== null ? 'select-none' : ''}`}
+          onPointerDown={rubber.onPointerDown}
           onClick={(e) => {
+            if (rubber.justCommitted.current) {
+              rubber.justCommitted.current = false; // это отпустили рамку, а не кликнули по фону
+              return;
+            }
             const t = e.target as HTMLElement;
             if (t === e.currentTarget || t.dataset.gallery !== undefined) clearSelection();
           }}
@@ -727,15 +866,12 @@ function Shell({ onLocked }: { onLocked: () => void }) {
           )}
         </main>
 
-        {propsOpen && (
-          <PropertiesPanel
-            target={propsTarget}
-            onSave={saveProperties}
-            onClose={() => setPropsOpen(false)}
-            sourceNames={sourceNames}
-            onOpenSource={(id) => void openSource(id)}
-            focusTagsFor={focusTagsFor}
-            onTagsFocused={() => setFocusTagsFor(null)}
+        {filterOpen && (
+          <FilterPanel
+            filter={filter}
+            canScopeFolder={folderId !== null}
+            onChange={changeFilter}
+            onClose={() => setFilterOpen(false)}
           />
         )}
       </div>
@@ -749,6 +885,19 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         onWatchDisable={() => void watch.disable()}
       />
 
+      {rubber.box !== null && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed z-40 rounded-sm border border-accent/80 bg-accent/10"
+          style={{
+            left: rubber.box.left,
+            top: rubber.box.top,
+            width: rubber.box.width,
+            height: rubber.box.height,
+          }}
+        />
+      )}
+
       {tagsOpen && <TagsScreen onBack={() => setTagsOpen(false)} onFilter={filterByTag} />}
 
       {selection.selected.size > 0 && !tagsOpen && (
@@ -761,6 +910,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             const [id] = selection.selected;
             if (id !== undefined) setRenamingId(id);
           }}
+          onUniqueNames={askUniqueNames}
           onMove={() => setMoveTargets(selectedEntries)}
           onProperties={() => openProperties(null)}
           onDelete={() => requestDelete([...selection.selected])}
@@ -785,10 +935,34 @@ function Shell({ onLocked }: { onLocked: () => void }) {
           onIndex={(index) => setViewer({ ...viewer, index })}
           onClose={() => setViewer(null)}
           onActivity={markActivity}
+          sourceNames={sourceNames}
+          onOpenSource={(id) => {
+            setViewer(null);
+            void openSource(id);
+          }}
+          onFilterTag={(tagId) => {
+            setViewer(null);
+            filterByTag(tagId);
+          }}
+          onSavePatch={saveProperties}
         />
       )}
       {viewer?.kind === 'video' && (
-        <VideoModal entry={viewer.entry} onClose={() => setViewer(null)} onActivity={markActivity} />
+        <VideoModal
+          entry={viewer.entry}
+          onClose={() => setViewer(null)}
+          onActivity={markActivity}
+          sourceNames={sourceNames}
+          onOpenSource={(id) => {
+            setViewer(null);
+            void openSource(id);
+          }}
+          onFilterTag={(tagId) => {
+            setViewer(null);
+            filterByTag(tagId);
+          }}
+          onSavePatch={saveProperties}
+        />
       )}
       {viewer?.kind === 'link' && <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />}
 

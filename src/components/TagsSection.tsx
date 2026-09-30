@@ -7,7 +7,7 @@ import { useEvent } from '../hooks/useEvent';
 import { useTagActions } from '../hooks/useTagActions';
 import { useTagCatalog } from '../hooks/useTagCatalog';
 import { displayName } from '../lib/link';
-import type { CreatePlan } from '../lib/tagInput';
+import type { ResolvedCreatePlan } from '../lib/tagInput';
 import { groupEntryTags, tagText } from '../lib/tags';
 import type { CatalogTag, EntryTag } from '../lib/tags';
 import { chipButtonClass, chipClass, TagText } from './TagChip';
@@ -48,18 +48,22 @@ function InheritedChip({
  * Секция «Теги» панели свойств (UF-16, UF-22): теги записи по категориям, поле
  * добавления и переключатель «Наследуется». Прямой тег снимается крестиком, его
  * наследование переключается кнопкой ↳ (повторное присвоение с другим inherit).
+ * Клик по имени прямого тега (onFilterTag) - фильтр по нему на весь сейф.
  * focusRequested - открыли из меню «Теги…»: фокус в поле ввода.
  */
 export function TagsSection({
   entry,
   sourceNames,
   onOpenSource,
+  onFilterTag,
   focusRequested = false,
   onFocused,
 }: {
   entry: Entry;
   sourceNames: ReadonlyMap<number, string>;
   onOpenSource: (id: number) => void;
+  /** клик по тегу записи - фильтр по нему (панель фильтра открывает MainShell) */
+  onFilterTag?: (tagId: number) => void;
   focusRequested?: boolean;
   onFocused?: () => void;
 }) {
@@ -97,7 +101,7 @@ export function TagsSection({
   const add = (tag: CatalogTag) =>
     actions.assign([entry.id], { add: [{ tagId: tag.id, inherit }] }).then(() => undefined);
 
-  const create = async (plan: CreatePlan) => {
+  const create = async (plan: ResolvedCreatePlan) => {
     const { tag } = await actions.createTag(plan);
     await actions.assign([entry.id], { add: [{ tagId: tag.id, inherit }] });
   };
@@ -112,9 +116,20 @@ export function TagsSection({
             <div key={g.categoryId} className="flex flex-wrap gap-1.5">
               {g.direct.map((t) => (
                 <span key={t.tagId} className={chipClass()}>
-                  <span className="min-w-0 truncate">
-                    <TagText category={t.category} name={t.name} />
-                  </span>
+                  {onFilterTag !== undefined ? (
+                    <button
+                      type="button"
+                      className="min-w-0 cursor-pointer truncate text-left transition hover:text-white hover:underline hover:underline-offset-2"
+                      title={`Показать все записи с тегом «${tagText(t)}»`}
+                      onClick={() => onFilterTag(t.tagId)}
+                    >
+                      <TagText category={t.category} name={t.name} />
+                    </button>
+                  ) : (
+                    <span className="min-w-0 truncate">
+                      <TagText category={t.category} name={t.name} />
+                    </span>
+                  )}
                   <button
                     type="button"
                     aria-pressed={t.inherit}
@@ -163,7 +178,7 @@ export function TagsSection({
 
       <TagCombobox
         label="Добавить тег"
-        placeholder="категория:тег"
+        placeholder="тег"
         allowCreate
         exclude={assigned}
         inputRef={inputRef}

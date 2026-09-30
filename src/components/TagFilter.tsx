@@ -1,6 +1,6 @@
-import { useId, useMemo, useState } from 'react';
+import { useId, useMemo } from 'react';
 import type { TagMatch } from '../api/types';
-import { useDismiss } from '../hooks/useDismiss';
+import { useEscape } from '../hooks/useDismiss';
 import { useTagCatalog } from '../hooks/useTagCatalog';
 import { addFilterTag, EMPTY_FILTER, isFilterActive, removeFilterTag } from '../lib/tagFilter';
 import type { FilterScope, TagFilter } from '../lib/tagFilter';
@@ -55,137 +55,171 @@ function Radio<T extends string>({
 }
 
 /**
- * Фильтр по тегам рядом с поиском (UF-18): кнопка открывает поповер с полем выбора
- * (тот же комбобокс, но без создания тегов), выбранными чипами, режимом сочетания
- * и областью «весь сейф / в этой папке». Фильтр действует сразу, без кнопки «Применить».
- * canScopeFolder - открыта папка или запись; в корне «в этой папке» = весь сейф.
+ * Панель фильтра по тегам, пришвартованная справа (UF-18). Сверху - поле с
+ * автодополнением и выбранные чипы, ниже - режим сочетания и область, под ними
+ * весь каталог: категории и теги с числом записей; клик по тегу включает его в
+ * фильтр (или выключает) - можно выбирать, не набирая текст. Фильтр действует
+ * сразу, без кнопки «Применить»; панель остаётся открытой, пока её не закрыть
+ * (крестиком или Esc), и результат виден тут же в галерее. canScopeFolder -
+ * открыта папка или запись; в корне «в этой папке» = весь сейф.
  */
-export function TagFilterButton({
+export function FilterPanel({
   filter,
   canScopeFolder,
   onChange,
-  className,
+  onClose,
 }: {
   filter: TagFilter;
   canScopeFolder: boolean;
   onChange: (filter: TagFilter) => void;
-  className: string;
+  onClose: () => void;
 }) {
   const catalog = useTagCatalog();
   const groupName = useId();
-  const [open, setOpen] = useState(false);
-  const ref = useDismiss<HTMLDivElement>(() => setOpen(false), open);
+  // Esc закрывает панель, даже если фокус в поле; Esc внутри комбобокса
+  // (закрыть список, очистить поле) перехватывается раньше
+  useEscape(onClose);
 
-  const selected = useMemo(
+  const selected = useMemo(() => new Set(filter.tags), [filter.tags]);
+  const picked = useMemo(
     () => filter.tags.flatMap((id) => catalog.tags.get(id) ?? []),
     [filter.tags, catalog],
   );
-  const exclude = useMemo(() => new Set(filter.tags), [filter.tags]);
   const active = isFilterActive(filter);
   // в корне «в этой папке» ничего не меняет - показываем, что действует весь сейф
   const scope: FilterScope = canScopeFolder ? filter.scope : 'vault';
 
   return (
-    <div ref={ref} className="relative shrink-0">
-      <button
-        type="button"
-        className={`${className} ${active ? 'border-accent text-zinc-100' : ''}`}
-        aria-haspopup="dialog"
-        aria-expanded={open}
-        title="Фильтр по тегам"
-        onClick={() => setOpen((o) => !o)}
-      >
-        Фильтр
-        {active && (
-          <span className="rounded-full bg-accent px-1.5 text-xs leading-5 text-white" aria-label={`Выбрано тегов: ${filter.tags.length}`}>
-            {filter.tags.length}
-          </span>
-        )}
-      </button>
-
-      {open && (
-        <div
-          role="dialog"
-          aria-label="Фильтр по тегам"
-          className="absolute right-0 top-full z-50 mt-1 w-96 rounded-xl border border-zinc-700 bg-zinc-900 p-3 shadow-2xl"
+    <aside
+      aria-label="Фильтр по тегам"
+      className="flex w-72 shrink-0 flex-col border-l border-zinc-800 bg-zinc-950"
+    >
+      <div className="flex items-center justify-between px-3 pb-2 pt-3">
+        <h2 className="text-sm font-medium text-zinc-100">Фильтр по тегам</h2>
+        <button
+          type="button"
+          aria-label="Закрыть панель фильтра"
+          title="Закрыть (Esc)"
+          className="rounded p-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
+          onClick={onClose}
         >
-          <TagCombobox
-            label="Выбрать тег для фильтра"
-            placeholder="категория:тег"
-            allowCreate={false}
-            autoFocus
-            floating
-            exclude={exclude}
-            onPick={async (tag: CatalogTag) => onChange(addFilterTag(filter, tag.id))}
-          />
+          ✕
+        </button>
+      </div>
 
-          {selected.length > 0 && (
-            <ul aria-label="Выбранные теги" className="mt-2.5 flex flex-wrap gap-1.5">
-              {selected.map((tag) => (
-                <li key={tag.id} className={chipClass()}>
-                  <span className="min-w-0 truncate">
-                    <TagText category={tag.category} name={tag.name} />
-                  </span>
-                  <button
-                    type="button"
-                    aria-label={`Убрать из фильтра «${tagText(tag)}»`}
-                    title="Убрать из фильтра"
-                    className={chipButtonClass}
-                    onClick={() => onChange(removeFilterTag(filter, tag.id))}
-                  >
-                    ✕
-                  </button>
-                </li>
-              ))}
-            </ul>
-          )}
+      <div className="px-3">
+        <TagCombobox
+          label="Выбрать тег для фильтра"
+          placeholder="тег"
+          allowCreate={false}
+          exclude={selected}
+          onPick={async (tag: CatalogTag) => onChange(addFilterTag(filter, tag.id))}
+        />
 
-          <div role="radiogroup" aria-label="Сочетание тегов" className="mt-3 flex flex-col gap-1.5">
-            {MATCH_OPTIONS.map((o) => (
-              <Radio
-                key={o.value}
-                name={`${groupName}-match`}
-                value={o.value}
-                current={filter.match}
-                label={o.label}
-                hint={o.hint}
-                onSelect={(match) => onChange({ ...filter, match })}
-              />
+        {picked.length > 0 && (
+          <ul aria-label="Выбранные теги" className="mt-2 flex flex-wrap gap-1.5">
+            {picked.map((tag) => (
+              <li key={tag.id} className={chipClass()}>
+                <span className="min-w-0 truncate">
+                  <TagText category={tag.category} name={tag.name} />
+                </span>
+                <button
+                  type="button"
+                  aria-label={`Убрать из фильтра «${tagText(tag)}»`}
+                  title="Убрать из фильтра"
+                  className={chipButtonClass}
+                  onClick={() => onChange(removeFilterTag(filter, tag.id))}
+                >
+                  ✕
+                </button>
+              </li>
             ))}
-          </div>
+          </ul>
+        )}
+      </div>
 
-          <div role="radiogroup" aria-label="Область поиска" className="mt-3 flex gap-4 border-t border-zinc-800 pt-3">
-            <Radio<FilterScope>
-              name={`${groupName}-scope`}
-              value="vault"
-              current={scope}
-              label="Весь сейф"
-              onSelect={(scope) => onChange({ ...filter, scope })}
-            />
-            <Radio<FilterScope>
-              name={`${groupName}-scope`}
-              value="folder"
-              current={scope}
-              label="В этой папке"
-              hint={canScopeFolder ? 'Вместе с вложениями, рекурсивно' : 'Откройте папку, чтобы искать только в ней'}
-              disabled={!canScopeFolder}
-              onSelect={(scope) => onChange({ ...filter, scope })}
-            />
-          </div>
+      <div role="radiogroup" aria-label="Сочетание тегов" className="mt-3 flex flex-col gap-1.5 px-3">
+        {MATCH_OPTIONS.map((o) => (
+          <Radio
+            key={o.value}
+            name={`${groupName}-match`}
+            value={o.value}
+            current={filter.match}
+            label={o.label}
+            hint={o.hint}
+            onSelect={(match) => onChange({ ...filter, match })}
+          />
+        ))}
+      </div>
 
-          {active && (
-            <div className="mt-3 flex justify-end">
-              <button
-                type="button"
-                className="rounded px-2 py-1 text-xs text-zinc-400 transition hover:text-zinc-200"
-                onClick={() => onChange({ ...EMPTY_FILTER, match: filter.match, scope: filter.scope })}
-              >
-                Сбросить фильтр
-              </button>
-            </div>
-          )}
+      <div role="radiogroup" aria-label="Область поиска" className="mt-2.5 flex gap-4 border-b border-zinc-800 px-3 pb-2.5">
+        <Radio<FilterScope>
+          name={`${groupName}-scope`}
+          value="vault"
+          current={scope}
+          label="Весь сейф"
+          onSelect={(scope) => onChange({ ...filter, scope })}
+        />
+        <Radio<FilterScope>
+          name={`${groupName}-scope`}
+          value="folder"
+          current={scope}
+          label="В этой папке"
+          hint={canScopeFolder ? 'Вместе с вложениями, рекурсивно' : 'Откройте папку, чтобы искать только в ней'}
+          disabled={!canScopeFolder}
+          onSelect={(scope) => onChange({ ...filter, scope })}
+        />
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2.5">
+        <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
+          Все теги
+        </p>
+        {catalog.categories.length === 0 ? (
+          <p className="text-xs text-zinc-600">{catalog.ready ? 'Тегов пока нет' : 'Загрузка…'}</p>
+        ) : (
+          catalog.categories.map((c) => (
+            <section key={c.id} aria-label={`Категория ${c.name}`} className="mb-2.5">
+              <h3 className="mb-1 text-xs text-zinc-400">{c.name}</h3>
+              <div className="flex flex-wrap gap-1">
+                {c.tags.map((t) => {
+                  const tag = catalog.tags.get(t.id);
+                  if (tag === undefined) return null;
+                  const on = selected.has(t.id);
+                  return (
+                    <button
+                      key={t.id}
+                      type="button"
+                      aria-pressed={on}
+                      title={`${tagText(tag)} — записей: ${t.count}. Щёлкните, чтобы ${on ? 'убрать из' : 'добавить в'} фильтр`}
+                      className={`max-w-full truncate rounded-full border px-1.5 text-[11px] leading-5 transition ${
+                        on
+                          ? 'border-accent bg-accent/30 text-zinc-100'
+                          : 'border-zinc-700 bg-zinc-800/80 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
+                      }`}
+                      onClick={() => onChange(on ? removeFilterTag(filter, t.id) : addFilterTag(filter, t.id))}
+                    >
+                      {t.name} <span className="text-zinc-500">{t.count}</span>
+                    </button>
+                  );
+                })}
+              </div>
+            </section>
+          ))
+        )}
+      </div>
+
+      {active && (
+        <div className="border-t border-zinc-800 px-3 py-2">
+          <button
+            type="button"
+            className="w-full rounded px-2 py-1 text-xs text-zinc-400 transition hover:bg-zinc-800 hover:text-zinc-200"
+            onClick={() => onChange({ ...EMPTY_FILTER, match: filter.match, scope: filter.scope })}
+          >
+            Сбросить фильтр
+          </button>
         </div>
       )}
-    </div>
+    </aside>
   );
 }

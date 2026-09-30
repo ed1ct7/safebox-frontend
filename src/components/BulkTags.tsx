@@ -5,7 +5,7 @@ import { useDismiss } from '../hooks/useDismiss';
 import { useTagActions } from '../hooks/useTagActions';
 import { useTagCatalog } from '../hooks/useTagCatalog';
 import { plural } from '../lib/format';
-import type { CreatePlan } from '../lib/tagInput';
+import type { ResolvedCreatePlan } from '../lib/tagInput';
 import { selectionTags, tagText } from '../lib/tags';
 import type { CatalogTag } from '../lib/tags';
 import { chipButtonClass, TagText } from './TagChip';
@@ -35,7 +35,7 @@ function BulkTagsPopover({ entries }: { entries: Entry[] }) {
     reportAdded((await actions.assign(ids, { add: [{ tagId, inherit }] })).updated);
   };
 
-  const create = async (plan: CreatePlan) => {
+  const create = async (plan: ResolvedCreatePlan) => {
     const { tag } = await actions.createTag(plan);
     await addById(tag.id);
   };
@@ -64,7 +64,7 @@ function BulkTagsPopover({ entries }: { entries: Entry[] }) {
       </h3>
       <TagCombobox
         label="Добавить тег выделенным"
-        placeholder="категория:тег"
+        placeholder="тег"
         allowCreate
         autoFocus
         onPick={(tag) => addById(tag.id)}

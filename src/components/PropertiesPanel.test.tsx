@@ -95,6 +95,22 @@ describe('PropertiesPanel: содержимое', () => {
     expect(within(tags).getByRole('checkbox', { name: 'Наследуется' })).not.toBeChecked();
   });
 
+  it('клик по имени тега в «Тегах» - фильтр по нему (onFilterTag)', async () => {
+    const onFilterTag = vi.fn();
+    render(
+      <PropertiesPanel
+        target={{ entries: [{ ...photo, tags: [{ tagId: 1, inherit: false }] }], scope: 'selection' }}
+        onSave={vi.fn(() => Promise.resolve())}
+        onClose={vi.fn()}
+        onFilterTag={onFilterTag}
+      />,
+      { wrapper: makeWrapper().Wrapper },
+    );
+    const user = userEvent.setup();
+    await user.click(await screen.findByRole('button', { name: 'character: eris greyrat' }));
+    expect(onFilterTag).toHaveBeenCalledWith(1);
+  });
+
   it('несколько записей - сводка без полей, ничего - подсказка', () => {
     const { unmount } = setup([photo, makeEntry({ id: 8, size: 1024 })]);
     expect(screen.getByText('Выбрано: 2 объекта')).toBeInTheDocument();

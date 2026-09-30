@@ -5,10 +5,10 @@ import { filesFromInput } from '../lib/dnd';
 import { isHttpUrl } from '../lib/link';
 import { supportsWatch } from '../lib/fsAccess';
 import { useDismiss } from '../hooks/useDismiss';
+import { isFilterActive } from '../lib/tagFilter';
 import type { TagFilter } from '../lib/tagFilter';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { SettingsMenu } from './SettingsMenu';
-import { TagFilterButton } from './TagFilter';
 import { useToast } from './Toasts';
 
 export interface TopBarProps {
@@ -19,7 +19,8 @@ export interface TopBarProps {
   onSearchText: (text: string) => void;
   filter: TagFilter;
   filterSummary: string | null; // текст крошки «Фильтр: …»; null — фильтр не задан
-  canScopeFolder: boolean; // открыта папка или запись: фильтр можно ограничить ею
+  filterOpen: boolean; // открыта панель фильтра справа
+  onToggleFilter: () => void;
   onFilterChange: (filter: TagFilter) => void;
   tagsOpen: boolean; // открыт экран «Теги»
   onToggleTags: () => void;
@@ -80,12 +81,23 @@ export function TopBar(props: TopBarProps) {
       </div>
 
       <SearchInput text={props.searchText} onText={props.onSearchText} />
-      <TagFilterButton
-        filter={props.filter}
-        canScopeFolder={props.canScopeFolder}
-        onChange={props.onFilterChange}
-        className={toolButton}
-      />
+      <button
+        type="button"
+        className={`${toolButton} ${props.filterOpen || isFilterActive(props.filter) ? 'border-accent text-zinc-100' : ''}`}
+        aria-pressed={props.filterOpen}
+        title="Фильтр по тегам"
+        onClick={props.onToggleFilter}
+      >
+        Фильтр
+        {isFilterActive(props.filter) && (
+          <span
+            className="rounded-full bg-accent px-1.5 text-xs leading-5 text-white"
+            aria-label={`Выбрано тегов: ${props.filter.tags.length}`}
+          >
+            {props.filter.tags.length}
+          </span>
+        )}
+      </button>
       <LinkInput onAdd={props.onAddLink} />
       <button
         type="button"

@@ -400,6 +400,99 @@ describe('панель свойств (UF-22)', () => {
   });
 });
 
+describe('рамка выделения (UF-9)', () => {
+  it('протяжка с фона выделяет карточки под рамкой; клик сразу после - не сброс', async () => {
+    await renderShell();
+    const main = screen.getByRole('main');
+    // jsdom без PointerEvent: шлём MouseEvent с pointer-типом (button/clientX доезжают)
+    main.dispatchEvent(new MouseEvent('pointerdown', { bubbles: true, button: 0, clientX: 0, clientY: 0 }));
+    window.dispatchEvent(new MouseEvent('pointermove', { clientX: 120, clientY: 120 }));
+    window.dispatchEvent(new MouseEvent('pointerup'));
+    await waitFor(() => expect(screen.getByText('Выбрано: 3')).toBeInTheDocument());
+    // отпускание рамки рождает клик по фону - он не должен снимать свежее выделение
+    fireEvent.click(main);
+    expect(screen.getByText('Выбрано: 3')).toBeInTheDocument();
+    // следующий честный клик по фону - сбрасывает
+    fireEvent.click(main);
+    expect(screen.queryByText(/Выбрано: /)).toBeNull();
+  });
+
+  it('клик по фону без протяжки по-прежнему сбрасывает выделение', async () => {
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    expect(screen.getByText('Выбрано: 1')).toBeInTheDocument();
+    await user.click(screen.getByRole('main'));
+    expect(screen.queryByText(/Выбрано: /)).toBeNull();
+  });
+});
+
+describe('«Различить имена» - приписки одинаковым именам', () => {
+  const dup1 = makeEntry({ id: 21, kind: 'photo', name: 'dup.jpg' });
+  const dup2 = makeEntry({ id: 22, kind: 'photo', name: 'DUP.jpg' }); // без учёта регистра - та же группа
+  const keep = makeEntry({ id: 23, kind: 'file', name: 'отчёт.txt' });
+
+  it('кнопка выделяет дубли: первая остаётся, остальные получают (2)', async () => {
+    overrides['GET /api/v1/entries'] = () => ({
+      json: { ...rootListing, entries: [folder, dup1, dup2, keep] },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ToastProvider>
+          <MainShell onLocked={vi.fn()} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    await screen.findByText('dup.jpg');
+    const user = userEvent.setup();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «dup.jpg»' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «DUP.jpg»' }));
+    await user.click(screen.getByRole('button', { name: 'Различить имена' }));
+    const dialog = await screen.findByRole('dialog', { name: /Различить имена/ });
+    expect(dialog).toHaveTextContent('DUP.jpg → DUP (2).jpg');
+    overrides['PATCH /api/v1/entries/22'] = () => ({ json: { ...dup2, name: 'DUP (2).jpg' } });
+    await user.click(within(dialog).getByRole('button', { name: 'Переименовать' }));
+    await waitFor(() => expect(callsTo('PATCH', '/api/v1/entries/22')[0]?.body).toEqual({ name: 'DUP (2).jpg' }));
+    expect(await screen.findByText(/Переименовано: 1/)).toBeInTheDocument();
+  });
+
+  it('нет дублей - информационный тост, диалога нет', async () => {
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «Пример»' }));
+    await user.click(screen.getByRole('button', { name: 'Различить имена' }));
+    expect(await screen.findByText('Среди выделенных нет одинаковых имён')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Различить имена/ })).toBeNull();
+  });
+
+  it('одна выделенная - кнопка недоступна', async () => {
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    expect(screen.getByRole('button', { name: 'Различить имена' })).toBeDisabled();
+  });
+});
+
+describe('Ctrl+A - выделить всё в текущем виде (UF-9)', () => {
+  it('выделяет все карточки текущей папки', async () => {
+    const { user } = await renderShell();
+    await user.keyboard('{Control>}a{/Control}');
+    expect(screen.getByText('Выбрано: 3')).toBeInTheDocument();
+  });
+
+  it('работает на русской раскладке (e.key = «ф», физическая клавиша A)', async () => {
+    await renderShell();
+    fireEvent.keyDown(window, { key: 'ф', code: 'KeyA', ctrlKey: true });
+    expect(screen.getByText('Выбрано: 3')).toBeInTheDocument();
+  });
+
+  it('в поле ввода выделяет текст, а не карточки', async () => {
+    const { user } = await renderShell();
+    const search = screen.getByLabelText('Поиск по именам во всём сейфе');
+    await user.click(search);
+    await user.keyboard('{Control>}a{/Control}');
+    expect(screen.queryByText(/Выбрано: /)).toBeNull();
+  });
+});
+
 describe('ссылка (UF-6)', () => {
   it('«Копировать адрес» кладёт URL в буфер', async () => {
     await renderShell(); // userEvent.setup() подставляет свой буфер обмена

@@ -40,6 +40,13 @@ export function useSelection(visibleIds: readonly number[]) {
 
   const selectAll = useCallback(() => setSelected(new Set(visibleIds)), [visibleIds]);
 
+  /** Рамка выделения (UF-9): заменить выделение набором; якорь - первая карточка набора. */
+  const replace = useCallback((ids: readonly number[]) => {
+    setSelected(new Set(ids));
+    const [first] = ids;
+    anchor.current = first ?? null;
+  }, []);
+
   const clear = useCallback(() => {
     setSelected(EMPTY_SELECTION);
     anchor.current = null;
@@ -55,5 +62,5 @@ export function useSelection(visibleIds: readonly number[]) {
     [selected, visibleIds, only],
   );
 
-  return { selected, toggle, only, extendTo, selectAll, clear, move };
+  return { selected, toggle, only, extendTo, selectAll, replace, clear, move };
 }
