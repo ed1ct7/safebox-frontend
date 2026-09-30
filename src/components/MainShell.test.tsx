@@ -550,6 +550,67 @@ describe('Ctrl+A - выделить всё в текущем виде (UF-9)', (
   });
 });
 
+describe('Delete с подтверждением', () => {
+  const dogPhoto = makeEntry({ id: 24, kind: 'photo', name: 'пёс.jpg' });
+
+  beforeEach(() => {
+    overrides['DELETE /api/v1/entries/1'] = () => ({ json: { removed: 1 } });
+  });
+
+  it('по выделению в галерее: Delete спрашивает подтверждение и удаляет', async () => {
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    fireEvent.keyDown(window, { key: 'Delete' });
+    const dialog = await screen.findByRole('dialog', { name: 'Удалить «кот.jpg»?' });
+    await user.click(within(dialog).getByRole('button', { name: 'Удалить' }));
+    await waitFor(() => expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(1));
+  });
+
+  it('в просмотре фото: Delete удаляет текущее, показывается следующее', async () => {
+    overrides['GET /api/v1/entries'] = () => ({
+      json: { ...rootListing, entries: [folder, photo, dogPhoto, link] },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ToastProvider>
+          <MainShell onLocked={vi.fn()} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await screen.findAllByText('пёс.jpg');
+    fireEvent.click(screen.getByTitle(/^кот\.jpg/).closest('[data-entry-id]') as HTMLElement);
+    await screen.findByRole('dialog', { name: 'Просмотр фото' });
+    fireEvent.keyDown(window, { key: 'Delete' });
+    const confirm = await screen.findByRole('dialog', { name: 'Удалить «кот.jpg»?' });
+    await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
+    await waitFor(() => expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(1));
+    const viewer = await screen.findByRole('dialog', { name: 'Просмотр фото' });
+    expect(within(viewer).getByText('пёс.jpg')).toBeInTheDocument(); // следующий кадр на месте удалённого
+    expect(within(viewer).queryByText('кот.jpg')).toBeNull();
+  });
+
+  it('Esc при стопке (просмотрщик + подтверждение) закрывает только подтверждение', async () => {
+    const { user } = await renderShell();
+    fireEvent.click(screen.getByTitle(/^кот\.jpg/).closest('[data-entry-id]') as HTMLElement);
+    await screen.findByRole('dialog', { name: 'Просмотр фото' });
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await screen.findByRole('dialog', { name: 'Удалить «кот.jpg»?' });
+    await user.keyboard('{Escape}');
+    expect(screen.queryByRole('dialog', { name: 'Удалить «кот.jpg»?' })).toBeNull();
+    expect(screen.getByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
+  });
+
+  it('в поле ввода Delete правит текст, а не удаляет карточки', async () => {
+    const { user } = await renderShell();
+    const search = screen.getByLabelText('Поиск по именам во всём сейфе');
+    await user.click(search);
+    await user.type(search, 'кот');
+    fireEvent.keyDown(search, { key: 'Delete' });
+    expect(screen.queryByRole('dialog', { name: /Удалить/ })).toBeNull();
+  });
+});
+
 describe('ссылка (UF-6)', () => {
   it('«Копировать адрес» кладёт URL в буфер', async () => {
     await renderShell(); // userEvent.setup() подставляет свой буфер обмена

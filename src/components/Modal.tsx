@@ -1,6 +1,5 @@
 import { useEffect, useRef } from 'react';
 import type { MouseEvent, ReactNode } from 'react';
-import { useEscape } from '../hooks/useDismiss';
 
 // Сколько модалок открыто: глобальные хоткеи галереи (Delete, F2, Ctrl+A,
 // вставка) молчат, пока пользователь в диалоге или просмотрщике.
@@ -9,6 +8,10 @@ let openModals = 0;
 export function anyModalOpen(): boolean {
   return openModals > 0;
 }
+
+// Стек открытых Modal: Esc закрывает только верхнюю (например, подтверждение
+// удаления поверх фото на весь экран), нижние ждут своей очереди.
+const escStack: object[] = [];
 
 /**
  * Оверлей: Escape и клик мимо закрывают. «Мимо» — элемент с data-dismiss
@@ -28,7 +31,25 @@ export function Modal({
   label?: string;
 }) {
   const downTarget = useRef<EventTarget | null>(null);
-  useEscape(onClose);
+  const closeRef = useRef(onClose);
+  closeRef.current = onClose;
+
+  useEffect(() => {
+    openModals += 1;
+    const entry = {};
+    escStack.push(entry);
+    const onKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Escape' || escStack[escStack.length - 1] !== entry) return;
+      e.stopPropagation(); // глобальные хоткеи окна этого нажатия не увидят
+      closeRef.current();
+    };
+    document.addEventListener('keydown', onKeyDown);
+    return () => {
+      document.removeEventListener('keydown', onKeyDown);
+      escStack.splice(escStack.indexOf(entry), 1);
+      openModals -= 1;
+    };
+  }, []);
 
   useEffect(() => {
     openModals += 1;

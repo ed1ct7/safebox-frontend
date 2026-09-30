@@ -35,6 +35,7 @@ export function Lightbox({
   onOpenSource,
   onFilterTag,
   onSavePatch,
+  onDeleteRequest,
 }: {
   photos: Entry[];
   index: number;
@@ -45,6 +46,8 @@ export function Lightbox({
   onOpenSource?: (id: number) => void;
   onFilterTag?: (tagId: number) => void;
   onSavePatch?: (id: number, patch: EntryPatch) => Promise<void>;
+  /** Delete в просмотре: спросить подтверждение и удалить текущее фото */
+  onDeleteRequest?: (entry: Entry) => void;
 }) {
   const [view, setView] = useState<View>(FIT);
   const [broken, setBroken] = useState(false);
@@ -68,6 +71,13 @@ export function Lightbox({
     if (isTypingTarget(e.target)) return; // стрелки в поле тегов листают подсказки, не фото
     if (e.key === 'ArrowLeft') go(-1);
     else if (e.key === 'ArrowRight') go(1);
+    else if (e.key === 'Delete' && onDeleteRequest !== undefined) {
+      const current = photos[index];
+      if (current !== undefined) {
+        e.preventDefault();
+        onDeleteRequest(current); // подтверждение спросит вызывающий
+      }
+    }
   });
 
   // React вешает wheel как passive — для preventDefault нужен свой listener

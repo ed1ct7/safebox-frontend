@@ -311,6 +311,15 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     onSuccess: (r, ids) => {
       toast(`Удалено: ${plural(r.removed, 'объект', 'объекта', 'объектов')}`, 'success');
       clearSelection();
+      // просмотрщик: удалённое фото/видео убрать из ленты, следующее - на место
+      setViewer((v) => {
+        if (v === null) return v;
+        if (v.kind !== 'photos') return ids.includes(v.entry.id) ? null : v;
+        if (!v.photos.some((p) => ids.includes(p.id))) return v;
+        const photos = v.photos.filter((p) => !ids.includes(p.id));
+        if (photos.length === 0) return null;
+        return { ...v, photos, index: Math.min(v.index, photos.length - 1) };
+      });
       // UF-10: удалённая открытая папка (или её предок) возвращает на родителя;
       // в режиме поиска меняем только папку «под» поиском, результаты не сбрасываем
       const back = folderPath === undefined ? undefined : folderAfterDelete(folderPath, new Set(ids));
@@ -953,6 +962,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             filterByTag(tagId);
           }}
           onSavePatch={saveProperties}
+          onDeleteRequest={(en) => requestDelete([en.id])}
         />
       )}
       {viewer?.kind === 'video' && (
@@ -970,6 +980,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             filterByTag(tagId);
           }}
           onSavePatch={saveProperties}
+          onDeleteRequest={(en) => requestDelete([en.id])}
         />
       )}
       {viewer?.kind === 'link' && <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />}

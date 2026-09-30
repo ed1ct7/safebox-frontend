@@ -1,7 +1,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { mediaUrl } from '../api/endpoints';
 import type { Entry, EntryPatch } from '../api/types';
-import { triggerDownload } from '../lib/dom';
+import { isTypingTarget, triggerDownload } from '../lib/dom';
+import { useWindowEvent } from '../hooks/useEvent';
 import { Modal } from './Modal';
 import { ViewerTags } from './ViewerTags';
 
@@ -9,7 +10,8 @@ import { ViewerTags } from './ViewerTags';
  * Плеер (UF-5): автозапуск, звук 80%, перемотка — сервер отдаёт Range-куски.
  * При закрытии поток обрывается явно: пока браузер держит соединение, сервер
  * держит аренду сессии, и блокировка ждала бы её освобождения. 🏷 открывает
- * слева панель тегов и описания записи (не выходя из просмотра).
+ * слева панель тегов и описания записи (не выходя из просмотра); Delete
+ * спрашивает подтверждение и удаляет запись.
  */
 export function VideoModal({
   entry,
@@ -19,6 +21,7 @@ export function VideoModal({
   onOpenSource,
   onFilterTag,
   onSavePatch,
+  onDeleteRequest,
 }: {
   entry: Entry;
   onClose: () => void;
@@ -27,10 +30,18 @@ export function VideoModal({
   onOpenSource?: (id: number) => void;
   onFilterTag?: (tagId: number) => void;
   onSavePatch?: (id: number, patch: EntryPatch) => Promise<void>;
+  /** Delete в просмотре: спросить подтверждение и удалить запись */
+  onDeleteRequest?: (entry: Entry) => void;
 }) {
   const ref = useRef<HTMLVideoElement>(null);
   const [failed, setFailed] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(false); // кино без панели; 🏷 открывает
+
+  useWindowEvent('keydown', (e) => {
+    if (isTypingTarget(e.target) || e.key !== 'Delete' || onDeleteRequest === undefined) return;
+    e.preventDefault();
+    onDeleteRequest(entry);
+  });
 
   useEffect(() => {
     const video = ref.current;
