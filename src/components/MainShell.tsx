@@ -21,6 +21,7 @@ import {
   triggerDownloads,
 } from '../lib/dom';
 import { dragKind, filesFromDataTransfer, linkTextFromDataTransfer, pastedFile } from '../lib/dnd';
+import { foldForSearch } from '../lib/fold';
 import { deleteWarning, firstLine, plural } from '../lib/format';
 import { displayName } from '../lib/link';
 import type { MenuAction } from '../lib/menu';
@@ -372,10 +373,17 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   });
 
   const askUniqueNames = useEvent(() => {
-    // занятые имена - всё содержимое текущего вида, чтобы приписка ни с кем не столкнулась
+    // занятые имена - всё содержимое текущего вида, но конфликт считается в пределах одной папки
     const changes = planSuffixRename(selectedEntries, entries);
     if (changes.length === 0) {
-      toast('Среди выделенных нет одинаковых имён', 'info');
+      const names = selectedEntries.map((en) => foldForSearch(en.name));
+      const sameNames = new Set(names).size !== names.length;
+      toast(
+        sameNames
+          ? 'Одинаковые имена — в разных папках, конфликтов нет' // поиск показал файлы из разных папок
+          : 'Среди выделенных нет одинаковых имён',
+        'info',
+      );
       return;
     }
     const preview = changes

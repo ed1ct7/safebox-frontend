@@ -14,7 +14,7 @@ describe('withSuffix', () => {
 });
 
 describe('planSuffixRename', () => {
-  const e = (id: number, name: string) => ({ id, name });
+  const e = (id: number, name: string, parentId: number | null = null) => ({ id, name, parentId });
 
   it('первый в группе сохраняет имя, остальные получают (2), (3)', () => {
     const changes = planSuffixRename([e(1, 'dup.jpg'), e(2, 'dup.jpg'), e(3, 'dup.jpg'), e(4, 'другой.txt')]);
@@ -24,17 +24,25 @@ describe('planSuffixRename', () => {
     ]);
   });
 
-  it('группы без учёта регистра и «ё»=«е»', () => {
-    const changes = planSuffixRename([e(1, 'Ёж.jpg'), e(2, 'еж.JPG')]);
+  it('одинаковые имена в РАЗНЫХ папках не конфликтуют - план пуст', () => {
+    const changes = planSuffixRename([e(1, 'IMG.jpg', 10), e(2, 'IMG.jpg', 20)]);
+    expect(changes).toEqual([]);
+  });
+
+  it('группа без учёта регистра и «ё»=«е» - но в одной папке', () => {
+    const changes = planSuffixRename([e(1, 'Ёж.jpg', 5), e(2, 'еж.JPG', 5)]);
     expect(changes).toEqual([{ id: 2, from: 'еж.JPG', to: 'еж (2).JPG' }]);
   });
 
-  it('свободная приписка не наталкивается на существующее «имя (2)»', () => {
-    const changes = planSuffixRename([e(1, 'dup.jpg'), e(2, 'dup.jpg')], [e(1, 'dup.jpg'), e(2, 'dup.jpg'), e(9, 'dup (2).jpg')]);
+  it('свободная приписка считается по соседям той же папки', () => {
+    const changes = planSuffixRename(
+      [e(1, 'dup.jpg', 5), e(2, 'dup.jpg', 5)],
+      [e(1, 'dup.jpg', 5), e(2, 'dup.jpg', 5), e(9, 'dup (2).jpg', 5), e(8, 'dup (2).jpg', 77)],
+    );
     expect(changes).toEqual([{ id: 2, from: 'dup.jpg', to: 'dup (3).jpg' }]);
   });
 
-  it('несколько независимых групп', () => {
+  it('несколько независимых групп в одной папке', () => {
     const changes = planSuffixRename([e(1, 'a.jpg'), e(2, 'b.png'), e(3, 'a.jpg'), e(4, 'b.png')]);
     expect(changes.map((c) => c.to)).toEqual(['a (2).jpg', 'b (2).png']);
   });

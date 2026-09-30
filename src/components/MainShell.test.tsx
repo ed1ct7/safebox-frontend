@@ -455,6 +455,31 @@ describe('«Различить имена» - приписки одинаков�
     expect(await screen.findByText(/Переименовано: 1/)).toBeInTheDocument();
   });
 
+  it('одинаковые имена из разных папок (поиск) - конфликтов нет, ничего не меняется', async () => {
+    // как в результатах поиска: два IMG.jpg лежат в разных папках
+    const fromA = makeEntry({ id: 31, kind: 'photo', name: 'IMG.jpg', parentId: 3 });
+    const fromB = makeEntry({ id: 32, kind: 'photo', name: 'IMG.jpg', parentId: 9 });
+    overrides['GET /api/v1/entries'] = () => ({
+      json: { ...rootListing, entries: [folder, fromA, fromB] },
+    });
+    render(
+      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
+        <ToastProvider>
+          <MainShell onLocked={vi.fn()} />
+        </ToastProvider>
+      </QueryClientProvider>,
+    );
+    const user = userEvent.setup();
+    await screen.findAllByText('IMG.jpg');
+    await user.click(screen.getAllByRole('checkbox', { name: 'Выбрать «IMG.jpg»' })[0]!);
+    await user.click(screen.getAllByRole('checkbox', { name: 'Выбрать «IMG.jpg»' })[1]!);
+    await user.click(screen.getByRole('button', { name: 'Различить имена' }));
+    expect(await screen.findByText('Одинаковые имена — в разных папках, конфликтов нет')).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Различить имена/ })).toBeNull();
+    expect(callsTo('PATCH', '/api/v1/entries/31')).toHaveLength(0);
+    expect(callsTo('PATCH', '/api/v1/entries/32')).toHaveLength(0);
+  });
+
   it('нет дублей - информационный тост, диалога нет', async () => {
     const { user } = await renderShell();
     await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));

@@ -17,29 +17,44 @@ export function withSuffix(name: string, n: number): string {
 }
 
 /**
- * Плана приписок для выделения: одинаковые имена (без учёта регистра, «ё»=«е»)
- * группируются; первая запись группы имя сохраняет, остальные получают
- * « (2)», « (3)»… как в проводнике. Занятыми считаются имена всех записей
- * folderEntries (обычно всё содержимое открытой папки) и уже назначенные в
- * этом плане - приписка не наткнётся на существующий «имя (2)». Возвращаются
- * только реальные изменения; записи без дублей не трогаются.
+ * План приписок для выделения - только настоящие конфликты: одинаковые имена
+ * В ПРЕДЕЛАХ ОДНОЙ папки (без учёта регистра, «ё»=«е»). Одинаковые имена из
+ * разных папок (частая картина в результатах поиска) не конфликтуют и не
+ * трогаются. Первая запись группы имя сохраняет, остальные получают
+ * « (2)», « (3)»… как в проводнике; свободность проверяется по именам
+ * соседей той же папки (folderEntries), занятые пропускаются. Возвращаются
+ * только реальные изменения.
  */
 export function planSuffixRename(
-  selected: readonly { id: number; name: string }[],
-  folderEntries: readonly { name: string }[] = selected,
+  selected: readonly { id: number; name: string; parentId: number | null }[],
+  folderEntries: readonly { name: string; parentId: number | null }[] = selected,
 ): NameChange[] {
-  const groups = new Map<string, { id: number; name: string }[]>();
+  // группы: одинаковое имя у записей одной папки
+  const groups = new Map<string, { id: number; name: string; parentId: number | null }[]>();
   for (const e of selected) {
-    const key = foldForSearch(e.name);
+    const key = `${e.parentId ?? '·'}|${foldForSearch(e.name)}`;
     const group = groups.get(key);
     if (group === undefined) groups.set(key, [e]);
     else group.push(e);
   }
 
-  const taken = new Set(folderEntries.map((e) => foldForSearch(e.name)));
+  // занятые имена - по папкам отдельно: приписка не должна столкнуться только со соседями
+  const takenByParent = new Map<number | '·', Set<string>>();
+  for (const e of folderEntries) {
+    const key = e.parentId ?? '·';
+    let taken = takenByParent.get(key);
+    if (taken === undefined) {
+      taken = new Set();
+      takenByParent.set(key, taken);
+    }
+    taken.add(foldForSearch(e.name));
+  }
+
   const changes: NameChange[] = [];
   for (const group of groups.values()) {
     if (group.length < 2) continue;
+    const parentKey = group[0]?.parentId ?? '·';
+    const taken = takenByParent.get(parentKey) ?? new Set<string>();
     group.forEach((e, i) => {
       if (i === 0) return; // первая в группе - как в проводнике, имя остаётся
       let n = i + 1;
