@@ -50,6 +50,17 @@ describe('ConflictDialog', () => {
     expect((onDone.mock.calls[0]?.[0] as Map<string, string>).get('a.txt')).toBe('skip');
   });
 
+  it('при перемещении есть «Оставить оба»: лежащие получат «имя (2)»', async () => {
+    const { onDone, user } = setup('move');
+    await user.click(screen.getByRole('button', { name: 'Оставить оба' }));
+    expect(onDone).toHaveBeenCalledWith('rename-existing');
+  });
+
+  it('при импорте «Оставить оба» нет - только по галочкам в «по каждому»', () => {
+    setup('import');
+    expect(screen.queryByRole('button', { name: 'Оставить оба' })).toBeNull();
+  });
+
   it('закрытие диалога (Esc, «Отмена») отменяет всю операцию', async () => {
     const first = setup();
     await first.user.keyboard('{Escape}');

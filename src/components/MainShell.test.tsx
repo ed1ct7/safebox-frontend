@@ -227,6 +227,38 @@ describe('перемещение (UF-14)', () => {
     expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [1, 2], parentId: 3 });
   });
 
+  it('«Оставить оба»: лежащие в папке переименовываются в «имя (2)», переносимое сохраняет имя', async () => {
+    // первая проверка плана - конфликт, после переименования лежащего - чисто
+    let plans = 0;
+    overrides['POST /api/v1/entries/move/plan'] = () => {
+      plans += 1;
+      return plans === 1
+        ? { json: { conflicts: [{ id: 1, existing: makeEntry({ id: 40, name: 'кот.jpg', size: 10, modifiedAt: 5 }) }] } }
+        : { json: { conflicts: [] } };
+    };
+    overrides['PATCH /api/v1/entries/40'] = () => ({ json: makeEntry({ id: 40, name: 'кот (2).jpg' }) });
+    // в папке назначения (id 3) лежит тот самый «кот.jpg»
+    overrides['GET /api/v1/entries'] = (c) => ({
+      json: c.query.get('parentId') === '3'
+        ? { parent: null, path: [], entries: [makeEntry({ id: 40, kind: 'folder', name: 'Папка' }), makeEntry({ id: 40, name: 'кот.jpg' })] }
+        : rootListing,
+    });
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    const bar = screen.getByRole('toolbar', { name: 'Действия с выделенным' });
+    await user.click(within(bar).getByRole('button', { name: 'Переместить…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
+    await user.click(within(dialog).getByRole('button', { name: /Папка/ }));
+    await user.click(within(dialog).getByRole('button', { name: 'Переместить' }));
+    const conflict = await screen.findByRole('dialog', { name: /В папке уже есть/ });
+    await user.click(within(conflict).getByRole('button', { name: 'Оставить оба' }));
+    await waitFor(() => expect(callsTo('PATCH', '/api/v1/entries/40')).toHaveLength(1));
+    expect(callsTo('PATCH', '/api/v1/entries/40')[0]?.body).toEqual({ name: 'кот (2).jpg' });
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
+    expect((callsTo('POST', '/api/v1/entries/move')[0]?.body as { resolutions?: unknown }).resolutions).toBeUndefined();
+    expect(plans).toBe(2); // после переименования план переспрошен
+  });
+
   it('занятое имя: тот же диалог, решение уходит в resolutions', async () => {
     overrides['POST /api/v1/entries/move/plan'] = () => ({
       json: { conflicts: [{ id: 1, existing: makeEntry({ id: 40, name: 'кот.jpg', size: 10, modifiedAt: 5 }) }] },

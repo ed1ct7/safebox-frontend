@@ -6,9 +6,8 @@ import {
   uniformResolutions,
   unresolvedCount,
 } from '../lib/conflicts';
-import type { Choice, ConflictRequest, ConflictSide } from '../lib/conflicts';
+import type { Choice, ConflictAnswer, ConflictRequest, ConflictSide } from '../lib/conflicts';
 import { formatBytes, formatDateTime } from '../lib/format';
-import type { Resolutions } from '../lib/importPlan';
 import { DialogPanel, Modal } from './Modal';
 
 const linkButton = 'rounded-lg px-3 py-1.5 text-sm text-zinc-400 transition hover:text-zinc-200';
@@ -24,6 +23,8 @@ function sideText(side: ConflictSide): string {
  * Имя уже занято (UF-15 при импорте, UF-14 при перемещении): «Заменить»,
  * «Пропустить» или решение по каждому файлу двумя галочками, как в проводнике:
  * только «приходящий» - заменить, только «лежащий» - пропустить, оба - оставить оба.
+ * При перемещении есть ещё «Оставить оба» целиком: переносимое сохраняет имена,
+ * а лежащие в папке получают «имя (2)», «имя (3)»… (answer 'rename-existing').
  * onDone(null) - отмена всей операции (кнопка, Esc, клик мимо).
  */
 export function ConflictDialog({
@@ -31,7 +32,7 @@ export function ConflictDialog({
   onDone,
 }: {
   request: ConflictRequest;
-  onDone: (resolutions: Resolutions | null) => void;
+  onDone: (answer: ConflictAnswer) => void;
 }) {
   const { items, kind } = request;
   const texts = CONFLICT_TEXTS[kind];
@@ -73,6 +74,16 @@ export function ConflictDialog({
               <button type="button" className={`${linkButton} mr-auto`} onClick={() => onDone(null)}>
                 Отмена
               </button>
+              {kind === 'move' && (
+                <button
+                  type="button"
+                  className={outlineButton}
+                  title="Переносимое сохранит имена, лежащие в папке получат «имя (2)», «имя (3)»… как в проводнике"
+                  onClick={() => onDone('rename-existing')}
+                >
+                  Оставить оба
+                </button>
+              )}
               <button type="button" className={outlineButton} onClick={() => setEach(true)}>
                 Решить для каждого файла
               </button>

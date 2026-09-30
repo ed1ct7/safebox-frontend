@@ -54,6 +54,10 @@ export interface Choice {
   existing: boolean;
 }
 
+/** Ответ диалога: решения по файлам, спецвариант «оставить оба, переименовав
+ * лежащие в папке» (только перемещение) или null - отмена всей операции. */
+export type ConflictAnswer = Resolutions | 'rename-existing' | null;
+
 /** Только приходящий — заменить, только лежащий — пропустить, оба — оставить оба. */
 export function policyOfChoice(choice: Choice): ConflictPolicy | null {
   if (choice.incoming && choice.existing) return 'keepBoth';

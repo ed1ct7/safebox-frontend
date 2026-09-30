@@ -81,6 +81,7 @@ export function useImporter({
               toast('Импорт отменён', 'info');
               continue;
             }
+            if (answer === 'rename-existing') continue; // кнопки нет при импорте - недостижимо
             resolutions = answer;
           }
 

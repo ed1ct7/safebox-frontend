@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import { act, render, screen } from '@testing-library/react';
 import userEvent from '@testing-library/user-event';
-import type { ConflictItem, ConflictRequest } from '../lib/conflicts';
-import type { Resolutions } from '../lib/importPlan';
+import type { ConflictAnswer, ConflictItem, ConflictRequest } from '../lib/conflicts';
+
 import { useConflictPrompt } from './useConflictPrompt';
 import type { AskConflicts } from './useConflictPrompt';
 
@@ -31,7 +31,7 @@ function setup() {
 describe('useConflictPrompt', () => {
   it('ответ пользователя приходит как результат обещания, диалог исчезает', async () => {
     const { ask, user } = setup();
-    let answer: Resolutions | null | undefined;
+    let answer: ConflictAnswer | undefined;
     act(() => {
       void ask(request('a.txt')).then((r) => (answer = r));
     });
@@ -42,7 +42,7 @@ describe('useConflictPrompt', () => {
 
   it('отмена - null', async () => {
     const { ask, user } = setup();
-    let answer: Resolutions | null | undefined;
+    let answer: ConflictAnswer | undefined;
     act(() => {
       void ask(request('a.txt')).then((r) => (answer = r));
     });
@@ -66,7 +66,7 @@ describe('useConflictPrompt', () => {
 
   it('размонтирование (блокировка сейфа) отменяет ожидающих', async () => {
     const { ask, unmount } = setup();
-    let answer: Resolutions | null | undefined;
+    let answer: ConflictAnswer | undefined;
     act(() => {
       void ask(request('a.txt')).then((r) => (answer = r));
     });

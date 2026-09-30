@@ -1,16 +1,15 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { ReactElement } from 'react';
 import { ConflictDialog } from '../components/ConflictDialog';
-import type { ConflictRequest } from '../lib/conflicts';
-import type { Resolutions } from '../lib/importPlan';
+import type { ConflictAnswer, ConflictRequest } from '../lib/conflicts';
 
 /** null - пользователь отменил всю операцию. */
-export type AskConflicts = (request: ConflictRequest) => Promise<Resolutions | null>;
+export type AskConflicts = (request: ConflictRequest) => Promise<ConflictAnswer>;
 
 interface Pending {
   id: number;
   request: ConflictRequest;
-  resolve: (answer: Resolutions | null) => void;
+  resolve: (answer: ConflictAnswer) => void;
 }
 
 /**
