@@ -30,7 +30,7 @@ export function menuItemsFor(entry: Entry): MenuItem[] {
   const items: (MenuItem | false)[] = [
     { action: 'open', label: 'Открыть' },
     hasAttachments && { action: 'openAttachments', label: 'Открыть вложения' },
-    !isLink && { action: 'download', label: 'Скачать' },
+    { action: 'download', label: isLink ? 'Скачать ярлык' : 'Скачать' },
     hasAttachments && { action: 'downloadAttachments', label: 'Скачать вложения' },
     isLink && { action: 'copyLink', label: 'Копировать адрес' },
     isLink && { action: 'refreshPreview', label: 'Обновить предпросмотр' },

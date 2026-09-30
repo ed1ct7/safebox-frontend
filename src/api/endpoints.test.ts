@@ -206,9 +206,9 @@ describe('скачивание', () => {
     expect(attachmentsZipUrlOf(folder)).toBeNull();
   });
 
-  it('ссылка скачивается только вложениями', () => {
+  it('ссылка скачивается ярлыком, вложения - zip', () => {
     const link = makeEntry({ id: 8, kind: 'link', url: 'https://a.com', childCount: 1 });
-    expect(downloadUrlOf(link)).toBeNull();
+    expect(downloadUrlOf(link)).toBe('/api/v1/media/8/download');
     expect(attachmentsZipUrlOf(link)).toBe('/api/v1/media/8/zip');
   });
 });

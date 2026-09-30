@@ -310,9 +310,8 @@ export function mediaUrl(id: number, what: 'thumbnail' | 'content' | 'download' 
   return `/api/v1/media/${id}/${what}`;
 }
 
-/** Файл — оригинал с оригинальным именем, папка — zip (UF-11). У ссылки скачивать нечего. */
+/** Файл — оригинал с оригинальным именем, папка — zip (UF-11), ссылка — ярлык `имя.url`. */
 export function downloadUrlOf(entry: Entry): string | null {
-  if (entry.kind === 'link') return null;
   return mediaUrl(entry.id, entry.kind === 'folder' ? 'zip' : 'download');
 }
 
