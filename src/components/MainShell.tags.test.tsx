@@ -100,12 +100,13 @@ beforeEach(() => {
     {
       id: 10,
       name: 'character',
+      nameEn: '',
       tags: [
-        { id: 1, categoryId: 10, name: 'eris greyrat', count: 3 },
-        { id: 2, categoryId: 10, name: 'roxy migurdia', count: 1 },
+        { id: 1, categoryId: 10, name: 'eris greyrat', nameEn: '', count: 3 },
+        { id: 2, categoryId: 10, name: 'roxy migurdia', nameEn: '', count: 1 },
       ],
     },
-    { id: 20, name: 'language', tags: [{ id: 5, categoryId: 20, name: 'ru', count: 4 }] },
+    { id: 20, name: 'language', nameEn: '', tags: [{ id: 5, categoryId: 20, name: 'ru', nameEn: '', count: 4 }] },
   ];
   installServer();
 });
@@ -337,6 +338,77 @@ describe('каталог тегов в левой колонке', () => {
     const user = await renderShell();
     await user.click(await within(sidebar()).findByRole('button', { name: 'Управление тегами' }));
     expect(await screen.findByRole('region', { name: 'Управление тегами' })).toBeInTheDocument();
+  });
+});
+
+// Язык имён тегов: RU/EN над каталогом слева пишет ту же настройку, что «Настройки»;
+// карточки, каталог, крошка фильтра и подсказки показывают имена на выбранном языке.
+describe('язык тегов (RU/EN)', () => {
+  let tagLanguage: 'ru' | 'en';
+  const sidebar = () => screen.getByRole('region', { name: 'Каталог тегов' });
+  const langSwitch = () => within(sidebar()).getByRole('radiogroup', { name: 'Язык тегов' });
+
+  beforeEach(() => {
+    tagLanguage = 'ru';
+    // второе имя есть у категории character и у тега eris greyrat; у roxy и language - нет
+    categories = categories.map((c) =>
+      c.id === 10
+        ? { ...c, nameEn: 'Characters', tags: c.tags.map((t) => (t.id === 1 ? { ...t, nameEn: 'Erisu' } : t)) }
+        : c,
+    );
+    server.routes['GET /api/v1/settings'] = () => ({ json: { linkPreviews: true, tagLanguage } });
+    server.routes['PATCH /api/v1/settings'] = (c) => {
+      tagLanguage = (c.body as { tagLanguage: 'ru' | 'en' }).tagLanguage;
+      return { json: { linkPreviews: true, tagLanguage } };
+    };
+  });
+
+  it('по умолчанию основные имена; EN переключает каталог, карточки и крошку фильтра, PATCH - { tagLanguage }', async () => {
+    const user = await renderShell();
+    expect(await within(sidebar()).findByRole('button', { name: 'eris greyrat 3' })).toBeInTheDocument();
+    expect(within(langSwitch()).getByRole('radio', { name: 'RU' })).toBeChecked();
+
+    await user.click(within(langSwitch()).getByRole('radio', { name: 'EN' }));
+    await waitFor(() => expect(server.callsTo('PATCH', '/api/v1/settings')).toHaveLength(1));
+    expect(server.callsTo('PATCH', '/api/v1/settings')[0]?.body).toEqual({ tagLanguage: 'en' });
+
+    // у eris greyrat - второе имя, у roxy migurdia и language нет - остаются основные
+    expect(await within(sidebar()).findByRole('button', { name: 'Erisu 3' })).toBeInTheDocument();
+    expect(within(sidebar()).getByText('Characters')).toBeInTheDocument();
+    expect(within(sidebar()).getByRole('button', { name: 'roxy migurdia 1' })).toBeInTheDocument();
+    expect(within(sidebar()).getByText('language')).toBeInTheDocument();
+    expect(within(cardOf('кот.jpg')).getByTitle(/Characters: Erisu/)).toBeInTheDocument();
+
+    // клик по чипу: фильтр по id, крошка - на языке тегов
+    await user.click(within(cardOf('кот.jpg')).getByRole('button', { name: 'Показать все записи с тегом «Characters: Erisu»' }));
+    await waitFor(() => expect(lastSearch()?.get('tags')).toBe('1'));
+    expect(await screen.findByText(/Фильтр: Characters: Erisu/)).toBeInTheDocument();
+
+    // обратно на RU: тот же фильтр, подписи основные
+    await user.click(within(langSwitch()).getByRole('radio', { name: 'RU' }));
+    expect(await screen.findByText(/Фильтр: character: eris greyrat/)).toBeInTheDocument();
+    expect(lastSearch()?.get('tags')).toBe('1');
+    expect(server.callsTo('PATCH', '/api/v1/settings').map((c) => c.body)).toEqual([
+      { tagLanguage: 'en' },
+      { tagLanguage: 'ru' },
+    ]);
+  });
+
+  it('язык с сервера (en) применяется сразу при открытии сейфа', async () => {
+    tagLanguage = 'en';
+    await renderShell();
+    expect(await within(sidebar()).findByRole('button', { name: 'Erisu 3' })).toBeInTheDocument();
+    expect(within(langSwitch()).getByRole('radio', { name: 'EN' })).toBeChecked();
+    expect(await within(cardOf('кот.jpg')).findByTitle(/Characters: Erisu/)).toBeInTheDocument();
+  });
+
+  it('подсказки ищут по второму имени при любом языке: «erisu» находит «eris greyrat»', async () => {
+    const user = await renderShell();
+    await within(sidebar()).findByRole('button', { name: 'eris greyrat 3' });
+    await user.click(screen.getByRole('button', { name: /^Фильтр/ }));
+    const panel = await screen.findByRole('complementary', { name: 'Фильтр по тегам' });
+    await user.type(within(panel).getByRole('combobox', { name: 'Выбрать тег для фильтра' }), 'erisu');
+    expect(await within(panel).findByRole('option', { name: /character: eris greyrat/ })).toBeInTheDocument();
   });
 });
 

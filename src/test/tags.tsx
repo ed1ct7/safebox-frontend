@@ -11,12 +11,13 @@ export function makeCategories(): Category[] {
     {
       id: 10,
       name: 'character',
+      nameEn: '',
       tags: [
-        { id: 1, categoryId: 10, name: 'eris greyrat', count: 3 },
-        { id: 2, categoryId: 10, name: 'roxy migurdia', count: 1 },
+        { id: 1, categoryId: 10, name: 'eris greyrat', nameEn: '', count: 3 },
+        { id: 2, categoryId: 10, name: 'roxy migurdia', nameEn: '', count: 1 },
       ],
     },
-    { id: 20, name: 'language', tags: [{ id: 5, categoryId: 20, name: 'ru', count: 4 }] },
+    { id: 20, name: 'language', nameEn: '', tags: [{ id: 5, categoryId: 20, name: 'ru', nameEn: '', count: 4 }] },
   ];
 }
 

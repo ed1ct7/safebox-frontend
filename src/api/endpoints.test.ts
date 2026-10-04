@@ -4,19 +4,23 @@ import {
   assignTags,
   attachmentsZipUrlOf,
   buildImportForm,
+  createCategory,
   createLinks,
   createTag,
   downloadUrlOf,
   getEntry,
   getSettings,
+  getTags,
   listEntries,
   moveEntries,
   planImport,
   planMove,
   refreshPreview,
   searchPath,
+  updateCategory,
   updateEntry,
   updateSettings,
+  updateTag,
 } from './endpoints';
 import type { PendingFile } from './endpoints';
 import { makeEntry } from '../test/factories';
@@ -127,6 +131,38 @@ describe('теги', () => {
     ).resolves.toMatchObject({ created: false });
     expect(calls[0]?.body).toEqual({ category: 'language', name: 'ru', createCategory: true });
   });
+
+  it('второе имя: create и PATCH передают nameEn, а без него - ключа нет', async () => {
+    stubFetch(201, { id: 1, categoryId: 2, name: 'Хината', nameEn: 'hinata' });
+    await createTag({ category: 'character', name: 'Хината', nameEn: 'hinata' });
+    await createTag({ category: 'character', name: 'Рокси' });
+    await updateTag(1, { nameEn: '' }); // '' стирает второе имя
+    await updateTag(1, { name: 'Х', categoryId: 3 });
+    await createCategory('Персонаж', 'Character');
+    await createCategory('Язык');
+    await updateCategory(4, { nameEn: 'Language' });
+    expect(calls.map((c) => [c.method, c.url, c.body])).toEqual([
+      ['POST', '/api/v1/tags', { category: 'character', name: 'Хината', nameEn: 'hinata' }],
+      ['POST', '/api/v1/tags', { category: 'character', name: 'Рокси' }],
+      ['PATCH', '/api/v1/tags/1', { nameEn: '' }],
+      ['PATCH', '/api/v1/tags/1', { name: 'Х', categoryId: 3 }],
+      ['POST', '/api/v1/tags/categories', { name: 'Персонаж', nameEn: 'Character' }],
+      ['POST', '/api/v1/tags/categories', { name: 'Язык' }],
+      ['PATCH', '/api/v1/tags/categories/4', { nameEn: 'Language' }],
+    ]);
+  });
+
+  it('GET /tags: старый сервер без nameEn - пустая строка у тегов и категорий', async () => {
+    stubFetch(200, {
+      categories: [
+        { id: 1, name: 'a', tags: [{ id: 2, categoryId: 1, name: 'x', count: 0 }] },
+        { id: 3, name: 'b', nameEn: 'B', tags: [{ id: 4, categoryId: 3, name: 'y', nameEn: 'Y', count: 1 }] },
+      ],
+    });
+    const { categories } = await getTags();
+    expect(categories.map((c) => c.nameEn)).toEqual(['', 'B']);
+    expect(categories.flatMap((c) => c.tags.map((t) => t.nameEn))).toEqual(['', 'Y']);
+  });
 });
 
 describe('ссылки и настройки', () => {
@@ -148,6 +184,14 @@ describe('ссылки и настройки', () => {
     await updateSettings({ linkPreviews: false });
     expect(calls[0]).toMatchObject({ url: '/api/v1/settings', method: 'GET' });
     expect(calls[1]).toEqual({ url: '/api/v1/settings', method: 'PATCH', body: { linkPreviews: false } });
+  });
+
+  it('язык тегов: PATCH частичный, tagLanguage без сервера - «ru»', async () => {
+    stubFetch(200, { linkPreviews: true });
+    await expect(getSettings()).resolves.toEqual({ linkPreviews: true, tagLanguage: 'ru' }); // старый сервер
+    stubFetch(200, { linkPreviews: true, tagLanguage: 'en' });
+    await expect(updateSettings({ tagLanguage: 'en' })).resolves.toEqual({ linkPreviews: true, tagLanguage: 'en' });
+    expect(calls[0]).toEqual({ url: '/api/v1/settings', method: 'PATCH', body: { tagLanguage: 'en' } }); // linkPreviews не уходит
   });
 });
 

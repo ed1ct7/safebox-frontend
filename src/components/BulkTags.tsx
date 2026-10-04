@@ -89,7 +89,7 @@ function BulkTagsPopover({ entries }: { entries: Entry[] }) {
           {rows.map(({ tag, count }) => (
             <li key={tag.id} className="flex items-center gap-2 text-xs">
               <span className="min-w-0 flex-1 truncate text-zinc-200">
-                <TagText category={tag.category} name={tag.name} />
+                <TagText tag={tag} />
               </span>
               <span className="shrink-0 text-zinc-500" title="У скольких выделенных записей тег стоит напрямую">
                 {count} из {entries.length}

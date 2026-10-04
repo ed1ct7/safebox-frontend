@@ -153,16 +153,27 @@ export function searchEntries(q: string, opts: SearchOptions = {}): Promise<Sear
 
 // ── Теги ────────────────────────────────────────────────────────────────────
 
-export function getTags(): Promise<TagsResponse> {
-  return api.get<TagsResponse>('/api/v1/tags');
+/** nameEn старый сервер не присылает: для каталога «нет второго имени» - пустая строка. */
+export async function getTags(): Promise<TagsResponse> {
+  const r = await api.get<TagsResponse>('/api/v1/tags');
+  return {
+    ...r,
+    categories: r.categories.map((c) => ({
+      ...c,
+      nameEn: c.nameEn ?? '',
+      tags: c.tags.map((t) => ({ ...t, nameEn: t.nameEn ?? '' })),
+    })),
+  };
 }
 
-export function createCategory(name: string): Promise<Category> {
-  return api.post<Category>('/api/v1/tags/categories', { name });
+/** nameEn - второе (английское) имя; не передан - не задаётся. */
+export function createCategory(name: string, nameEn?: string): Promise<Category> {
+  return api.post<Category>('/api/v1/tags/categories', { name, nameEn });
 }
 
-export function renameCategory(id: number, name: string): Promise<Category> {
-  return api.patch<Category>(`/api/v1/tags/categories/${id}`, { name });
+/** Что передано, то и меняется; nameEn: '' стирает второе имя. */
+export function updateCategory(id: number, patch: { name?: string; nameEn?: string }): Promise<Category> {
+  return api.patch<Category>(`/api/v1/tags/categories/${id}`, patch);
 }
 
 export function deleteCategory(id: number): Promise<RemovedTagsResponse> {
@@ -173,13 +184,18 @@ export function deleteCategory(id: number): Promise<RemovedTagsResponse> {
 export async function createTag(cmd: {
   category: string;
   name: string;
+  nameEn?: string;
   createCategory?: boolean;
 }): Promise<{ tag: Tag; created: boolean }> {
   const r = await api.postWithStatus<Tag>('/api/v1/tags', cmd);
   return { tag: r.data, created: r.status === 201 };
 }
 
-export function updateTag(id: number, patch: { name?: string; categoryId?: number }): Promise<Tag> {
+/** Что передано, то и меняется; nameEn: '' стирает второе имя. */
+export function updateTag(
+  id: number,
+  patch: { name?: string; nameEn?: string; categoryId?: number },
+): Promise<Tag> {
   return api.patch<Tag>(`/api/v1/tags/${id}`, patch);
 }
 
@@ -205,12 +221,18 @@ export function refreshPreview(id: number): Promise<Entry> {
   return api.post<Entry>(`/api/v1/entries/${id}/preview`);
 }
 
-export function getSettings(): Promise<Settings> {
-  return api.get<Settings>('/api/v1/settings');
+/** Старый сервер не знает tagLanguage: имена тегов тогда показываются основные («ru»). */
+function withDefaults(s: Settings): Settings {
+  return { ...s, tagLanguage: s.tagLanguage === 'en' ? 'en' : 'ru' };
 }
 
-export function updateSettings(patch: Partial<Settings>): Promise<Settings> {
-  return api.patch<Settings>('/api/v1/settings', patch);
+export async function getSettings(): Promise<Settings> {
+  return withDefaults(await api.get<Settings>('/api/v1/settings'));
+}
+
+/** Частичное тело: меняются только переданные настройки. */
+export async function updateSettings(patch: Partial<Settings>): Promise<Settings> {
+  return withDefaults(await api.patch<Settings>('/api/v1/settings', patch));
 }
 
 // ── Импорт ──────────────────────────────────────────────────────────────────

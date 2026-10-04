@@ -335,3 +335,48 @@ describe('TagCombobox: подсказки видны сразу', () => {
     expect(screen.queryByText('Новый тег — введите имя')).toBeNull();
   });
 });
+
+// Язык тегов: варианты подписаны на нём, а искать можно по любому из двух имён.
+describe('TagCombobox: язык тегов', () => {
+  const bilingual = () =>
+    makeCategories().map((c) =>
+      c.id === 10
+        ? { ...c, nameEn: 'Characters', tags: c.tags.map((t) => (t.id === 1 ? { ...t, nameEn: 'Erisu' } : t)) }
+        : c,
+    );
+  const serve = (tagLanguage: 'ru' | 'en') =>
+    installFakeServer({
+      'GET /api/v1/tags': () => ({ json: { categories: bilingual() } }),
+      'GET /api/v1/settings': () => ({ json: { linkPreviews: true, tagLanguage } }),
+    });
+
+  it('en: подпись «Characters: Erisu»; найти можно и по основному имени, Tab подставляет подпись', async () => {
+    serve('en');
+    const { user, box, onPick } = await setup();
+    await user.type(box, 'eris greyrat'); // основное имя
+    expect(await screen.findByRole('option', { name: /Characters: Erisu/ })).toBeInTheDocument();
+    await user.clear(box);
+    await user.type(box, 'erisu');
+    await screen.findByRole('option', { name: /Characters: Erisu/ });
+    await user.tab();
+    expect(box).toHaveValue('Characters:Erisu');
+    await user.clear(box);
+    await user.type(box, 'erisu');
+    await user.click(await screen.findByRole('option', { name: /Characters: Erisu/ }));
+    expect(onPick).toHaveBeenCalledWith(expect.objectContaining({ id: 1, name: 'eris greyrat', label: 'Erisu' }));
+  });
+
+  it('ru: подпись основная, но «erisu» по второму имени тоже находит тег', async () => {
+    serve('ru');
+    const { user, box } = await setup();
+    await user.type(box, 'erisu');
+    expect(await screen.findByRole('option', { name: /character: eris greyrat/ })).toBeInTheDocument();
+  });
+
+  it('создание с существующей категорией: в тексте варианта - её подпись', async () => {
+    serve('en');
+    const { user, box } = await setup();
+    await user.type(box, 'characters:sylphy');
+    expect(await screen.findByRole('option', { name: 'Создать тег sylphy в категории Characters' })).toBeInTheDocument();
+  });
+});

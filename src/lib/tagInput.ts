@@ -1,6 +1,6 @@
 import { foldForSearch } from './fold';
 import { validateTagName } from './rules';
-import { allTags, findCategory, findTag } from './tags';
+import { allTags, findCategory, findTag, matchesName } from './tags';
 import type { CatalogTag, TagCatalog } from './tags';
 
 // Разбор ввода «категория:тег» и подсказки для поля с автодополнением (UF-16, UF-18).
@@ -18,9 +18,9 @@ export function parseTagInput(text: string): ParsedTagInput {
   return { category: text.slice(0, i).trim(), name: text.slice(i + 1).trim() };
 }
 
-/** Что подставляет Tab в поле. */
-export function completionText(tag: Pick<CatalogTag, 'category' | 'name'>): string {
-  return `${tag.category}:${tag.name}`;
+/** Что подставляет Tab в поле: имена на языке тегов, как их видно в списке. */
+export function completionText(tag: Pick<CatalogTag, 'categoryLabel' | 'label'>): string {
+  return `${tag.categoryLabel}:${tag.label}`;
 }
 
 /** Создать тег name; category=null - категорию ещё не выбрали (как в менеджерах тегов:
@@ -62,6 +62,8 @@ const DEFAULT_LIMIT = 50;
 /**
  * Подсказки по тексту. Без «:» ищем по имени тега и по названию категории, с «:» -
  * категория слева, тег справа (обе части - подстрока, без учёта регистра, «ё» = «е»).
+ * Искать можно по любому из двух имён (основному и английскому) - независимо от
+ * языка тегов: «hinata» найдёт «Хината», у которого второе имя «hyuuga hinata».
  * Точные совпадения и начала имён - выше. Создание - как в менеджерах тегов: для
  * голого имени «Создать тег «имя»» с выбором категории кликом (category=null);
  * «категория:тег» тоже создаёт, категория тогда берётся из ввода.
@@ -79,7 +81,7 @@ export function suggestTags(catalog: TagCatalog, text: string, opts: SuggestOpti
     const category = findCategory(catalog, parsed.category);
     if (category !== undefined && nameQ !== '') exact = findTag(catalog, category.id, parsed.name);
   } else if (nameQ !== '') {
-    const same = allTags(catalog).filter((t) => foldForSearch(t.name) === nameQ);
+    const same = allTags(catalog).filter((t) => matchesName(t.name, t.nameEn, nameQ));
     if (same.length === 1) exact = same[0];
   }
   const excluded = exact !== undefined && exclude?.has(exact.id) === true;
@@ -88,19 +90,24 @@ export function suggestTags(catalog: TagCatalog, text: string, opts: SuggestOpti
   const scored: { tag: CatalogTag; score: number; cat: string; name: string }[] = [];
   let alreadyChosen = 0; // подошло бы, но уже выбрано
   for (const tag of allTags(catalog)) {
-    const cat = foldForSearch(tag.category);
-    const name = foldForSearch(tag.name);
+    // оба имени: подходит любое, а ранг - по лучшему из подошедших
+    const cats = foldedNames(tag.category, tag.categoryEn);
+    const nameHits = foldedNames(tag.name, tag.nameEn).filter((n) => n.includes(nameQ));
     let score: number;
     if (catQ !== null) {
-      if (!cat.includes(catQ) || !name.includes(nameQ)) continue;
-      score = (cat === catQ ? 0 : cat.startsWith(catQ) ? 1 : 2) * 4 + rankName(name, nameQ);
+      const catHits = cats.filter((c) => c.includes(catQ));
+      if (catHits.length === 0 || nameHits.length === 0) continue;
+      const catRank = Math.min(...catHits.map((c) => (c === catQ ? 0 : c.startsWith(catQ) ? 1 : 2)));
+      score = catRank * 4 + bestRank(nameHits, nameQ);
+    } else if (nameHits.length > 0) {
+      score = bestRank(nameHits, nameQ);
+    } else if (cats.some((c) => c.includes(nameQ))) {
+      score = cats.some((c) => c.startsWith(nameQ)) ? 2 : 3;
     } else {
-      const inName = name.includes(nameQ);
-      if (!inName && !cat.includes(nameQ)) continue;
-      score = inName ? rankName(name, nameQ) : cat.startsWith(nameQ) ? 2 : 3;
+      continue;
     }
     if (exclude?.has(tag.id) === true) alreadyChosen += 1;
-    else scored.push({ tag, score, cat, name });
+    else scored.push({ tag, score, cat: foldForSearch(tag.categoryLabel), name: foldForSearch(tag.label) });
   }
   scored.sort((a, b) => a.score - b.score || compare(a.cat, b.cat) || compare(a.name, b.name));
   result.tags = scored.slice(0, limit).map((s) => s.tag);
@@ -142,6 +149,16 @@ function compare(a: string, b: string): number {
   return a < b ? -1 : a > b ? 1 : 0;
 }
 
+/** Свёрнутые непустые имена: основное и, если задано, английское. */
+function foldedNames(name: string, nameEn: string): string[] {
+  return nameEn === '' ? [foldForSearch(name)] : [foldForSearch(name), foldForSearch(nameEn)];
+}
+
 function rankName(name: string, query: string): number {
   return name === query ? 0 : name.startsWith(query) ? 1 : 2;
+}
+
+/** Лучший ранг среди подошедших имён (names не пуст). */
+function bestRank(names: readonly string[], query: string): number {
+  return Math.min(...names.map((n) => rankName(n, query)));
 }

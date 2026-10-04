@@ -4,20 +4,22 @@ import { updateSettings } from '../api/endpoints';
 import { errorMessage, isUnauthorized } from '../api/client';
 import { settingsQuery } from '../api/queries';
 import { useDismiss } from '../hooks/useDismiss';
+import { TagLanguageSwitch } from './TagLanguageSwitch';
 import { useToast } from './Toasts';
 
 /**
- * Настройки (UF-21): поповер у кнопки, не модалка. Пока одна - «Загружать
- * предпросмотр ссылок»: это запрос к сайту с этого компьютера, поэтому его можно
- * выключить. Настройки не зависят от сейфа; читаются при открытии, PATCH - сразу
- * по переключению.
+ * Настройки (UF-21): поповер у кнопки, не модалка. «Загружать предпросмотр ссылок» -
+ * это запрос к сайту с этого компьютера, поэтому его можно выключить; «Язык тегов» -
+ * на каком языке показывать названия тегов и категорий. Настройки читаются один раз,
+ * когда открыт сейф (их же ждёт каталог тегов), PATCH - сразу по переключению, только
+ * с изменённым полем.
  */
 export function SettingsMenu({ className }: { className: string }) {
   const [open, setOpen] = useState(false);
   const ref = useDismiss<HTMLDivElement>(() => setOpen(false), open);
   const qc = useQueryClient();
   const toast = useToast();
-  const settings = useQuery({ ...settingsQuery, enabled: open });
+  const settings = useQuery(settingsQuery);
 
   const save = useMutation({
     mutationFn: (linkPreviews: boolean) => updateSettings({ linkPreviews }),
@@ -68,6 +70,13 @@ export function SettingsMenu({ className }: { className: string }) {
               </label>
               <p className="mt-2 text-xs text-zinc-500">
                 Название, описание и картинку сейф берёт со страницы — это запрос к сайту с этого компьютера.
+              </p>
+              <div className="mt-4 flex items-center justify-between gap-3 text-sm text-zinc-200">
+                <span>Язык тегов</span>
+                <TagLanguageSwitch labels={{ ru: 'Русский', en: 'English' }} />
+              </div>
+              <p className="mt-2 text-xs text-zinc-500">
+                Названия тегов и категорий показываются на этом языке; если английского названия нет — основное.
               </p>
             </>
           )}

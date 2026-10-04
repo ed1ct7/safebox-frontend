@@ -3,22 +3,24 @@ import type { FormEvent, KeyboardEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { ApiRequestError, errorMessage, isUnauthorized } from '../api/client';
 import { tagsQuery } from '../api/queries';
-import type { Category } from '../api/types';
 import { useEscape } from '../hooks/useDismiss';
 import { useTagActions } from '../hooks/useTagActions';
 import { useTagCatalog } from '../hooks/useTagCatalog';
 import { plural } from '../lib/format';
 import { validateTagName } from '../lib/rules';
 import { findTag, tagText } from '../lib/tags';
-import type { CatalogTag } from '../lib/tags';
+import type { CatalogCategory, CatalogTag } from '../lib/tags';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { ConfirmRequest } from './ConfirmDialog';
 import { useToast } from './Toasts';
 
-type Editing = { kind: 'category' | 'tag' | 'move'; id: number };
+// categoryEn/tagEn - второе (английское) имя; move - выбор другой категории для тега
+type Editing = { kind: 'category' | 'categoryEn' | 'tag' | 'tagEn' | 'move'; id: number };
 
 const iconButton =
   'rounded px-1.5 py-0.5 text-sm text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200 disabled:pointer-events-none disabled:opacity-40';
+
+const EN_PLACEHOLDER = 'EN — не задано';
 
 const inputClass =
   'min-w-0 flex-1 rounded-lg border bg-zinc-950 px-2 py-1 text-sm text-zinc-100 outline-none transition placeholder-zinc-600 focus:border-accent';
@@ -27,18 +29,23 @@ const inputClass =
  * Имя, правимое на месте: Enter или ✓ сохраняет, Esc или ✕ отменяет. Отказ
  * сервера остаётся под полем вместе с введённым текстом. onSubmit может
  * завершиться без ошибки и без правки (например, предложением слить теги) -
- * поле закроется в любом случае.
+ * поле закроется в любом случае. Неизменённое значение ничего не отправляет.
+ * allowEmpty - необязательное имя (второе, английское): пустое значение стирает его.
  */
 function InlineName({
   label,
   value,
   what,
+  placeholder,
+  allowEmpty = false,
   onSubmit,
   onDone,
 }: {
   label: string;
   value: string;
   what: 'тега' | 'категории';
+  placeholder?: string;
+  allowEmpty?: boolean;
   onSubmit: (name: string) => Promise<void>;
   onDone: () => void;
 }) {
@@ -52,7 +59,7 @@ function InlineName({
       onDone();
       return;
     }
-    const invalid = validateTagName(name, what);
+    const invalid = allowEmpty && name === '' ? null : validateTagName(name, what);
     if (invalid !== null) {
       setError(invalid);
       return;
@@ -87,6 +94,7 @@ function InlineName({
           aria-label={label}
           aria-invalid={error !== null}
           spellCheck={false}
+          placeholder={placeholder}
           value={text}
           disabled={busy}
           onChange={(e) => {
@@ -109,6 +117,24 @@ function InlineName({
         </p>
       )}
     </div>
+  );
+}
+
+/**
+ * Второе (английское) имя тега или категории рядом с основным: клик открывает правку
+ * на месте. Пусто - «не задано»: тогда на английском показывается основное имя.
+ */
+function EnName({ value, label, onEdit }: { value: string; label: string; onEdit: () => void }) {
+  return (
+    <button
+      type="button"
+      aria-label={label}
+      title="Английское название: нажмите, чтобы изменить"
+      className="min-w-0 max-w-[40%] truncate rounded border border-dashed border-zinc-700 px-1.5 py-0.5 text-xs text-zinc-400 transition hover:border-zinc-500 hover:text-zinc-200"
+      onClick={onEdit}
+    >
+      {value === '' ? <span className="text-zinc-600">{EN_PLACEHOLDER}</span> : value}
+    </button>
   );
 }
 
@@ -174,6 +200,8 @@ function NewCategoryForm() {
  * удалить тег; удаление - с подтверждением и числом затронутых записей.
  * Переименование в занятое имя (409) предлагает слить теги. Клик по тегу открывает
  * фильтр по нему. Панель поверх галереи, «Назад» или Esc возвращают к ней.
+ * У тега и категории два имени: основное и английское (пунктирная плашка рядом,
+ * «не задано» - пусто). Правятся они независимо, и уходит только изменённое поле.
  */
 export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter: (tagId: number) => void }) {
   const query = useQuery(tagsQuery);
@@ -206,18 +234,22 @@ export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter:
     setConfirm({
       title: 'Слить с существующим тегом?',
       message:
-        `Тег «${into.name}» уже есть в категории «${into.category}». Слить «${from.name}» с ним? ` +
-        `Все присвоения «${from.name}» (записей: ${from.count}) перейдут на «${into.name}», а сам «${from.name}» будет удалён.`,
+        `Тег «${into.label}» уже есть в категории «${into.categoryLabel}». Слить «${from.label}» с ним? ` +
+        `Все присвоения «${from.label}» (записей: ${from.count}) перейдут на «${into.label}», а сам «${from.label}» будет удалён.`,
       confirmLabel: 'Слить',
       danger: true,
       onConfirm: () => void merge(from, into),
     });
 
-  // 409: имя занято тегом той же (или целевой) категории - предлагаем слить с ним
-  const onConflict = (e: unknown, from: CatalogTag, categoryId: number, name: string): boolean => {
+  // 409: имя занято тегом той же (или целевой) категории, причём совпасть могло с любым
+  // из двух его имён - предлагаем слить с ним. names - имена, из-за которых мог быть отказ
+  const onConflict = (e: unknown, from: CatalogTag, categoryId: number, ...names: string[]): boolean => {
     if (!(e instanceof ApiRequestError) || e.status !== 409) return false;
-    const existing = findTag(catalog, categoryId, name);
-    if (existing === undefined || existing.id === from.id) return false;
+    const existing = names
+      .filter((name) => name !== '')
+      .map((name) => findTag(catalog, categoryId, name))
+      .find((tag) => tag !== undefined && tag.id !== from.id);
+    if (existing === undefined) return false;
     offerMerge(from, existing);
     return true;
   };
@@ -230,12 +262,21 @@ export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter:
     }
   };
 
+  // второе имя: PATCH только с nameEn; пустое стирает его
+  const setTagNameEn = async (tag: CatalogTag, nameEn: string) => {
+    try {
+      await actions.setTagNameEn(tag.id, nameEn);
+    } catch (e) {
+      if (!onConflict(e, tag, tag.categoryId, nameEn)) throw e;
+    }
+  };
+
   const moveTag = async (tag: CatalogTag, categoryId: number) => {
     setError(null);
     try {
       await actions.moveTag(tag.id, categoryId);
     } catch (e) {
-      if (!onConflict(e, tag, categoryId, tag.name)) fail(e, 'Не удалось перенести тег');
+      if (!onConflict(e, tag, categoryId, tag.name, tag.nameEn)) fail(e, 'Не удалось перенести тег');
     }
   };
 
@@ -260,10 +301,10 @@ export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter:
         })(),
     });
 
-  const removeCategory = (category: Category) => {
+  const removeCategory = (category: CatalogCategory) => {
     const total = category.tags.reduce((sum, t) => sum + t.count, 0);
     setConfirm({
-      title: `Удалить категорию «${category.name}»?`,
+      title: `Удалить категорию «${category.label}»?`,
       message:
         category.tags.length === 0
           ? 'В категории нет тегов. Восстановить её нельзя.'
@@ -348,6 +389,16 @@ export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter:
                         onSubmit={async (name) => void (await actions.renameCategory(category.id, name))}
                         onDone={stopEditing}
                       />
+                    ) : editing?.kind === 'categoryEn' && editing.id === category.id ? (
+                      <InlineName
+                        label="Английское имя категории"
+                        value={category.nameEn}
+                        what="категории"
+                        placeholder={EN_PLACEHOLDER}
+                        allowEmpty
+                        onSubmit={async (nameEn) => void (await actions.setCategoryNameEn(category.id, nameEn))}
+                        onDone={stopEditing}
+                      />
                     ) : (
                       <>
                         <h3 className="min-w-0 flex-1 truncate text-sm font-medium text-zinc-100" title={category.name}>
@@ -356,6 +407,11 @@ export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter:
                             {plural(category.tags.length, 'тег', 'тега', 'тегов')}
                           </span>
                         </h3>
+                        <EnName
+                          value={category.nameEn}
+                          label={`Английское имя категории «${category.name}»`}
+                          onEdit={() => setEditing({ kind: 'categoryEn', id: category.id })}
+                        />
                         <button
                           type="button"
                           aria-label={`Переименовать категорию «${category.name}»`}
@@ -382,99 +438,110 @@ export function TagsScreen({ onBack, onFilter }: { onBack: () => void; onFilter:
                     <p className="px-3 py-2 text-xs text-zinc-600">В категории пока нет тегов</p>
                   ) : (
                     <ul>
-                      {category.tags.map((t) => {
-                        const tag = catalog.tags.get(t.id);
-                        if (tag === undefined) return null;
-                        return (
-                          <li key={tag.id} className="flex items-center gap-2 px-3 py-1.5">
-                            {editing?.kind === 'tag' && editing.id === tag.id ? (
-                              <InlineName
-                                label="Новое имя тега"
-                                value={tag.name}
-                                what="тега"
-                                onSubmit={(name) => renameTag(tag, name)}
-                                onDone={stopEditing}
+                      {category.tags.map((tag) => (
+                        <li key={tag.id} className="flex items-center gap-2 px-3 py-1.5">
+                          {editing?.kind === 'tag' && editing.id === tag.id ? (
+                            <InlineName
+                              label="Новое имя тега"
+                              value={tag.name}
+                              what="тега"
+                              onSubmit={(name) => renameTag(tag, name)}
+                              onDone={stopEditing}
+                            />
+                          ) : editing?.kind === 'tagEn' && editing.id === tag.id ? (
+                            <InlineName
+                              label="Английское имя тега"
+                              value={tag.nameEn}
+                              what="тега"
+                              placeholder={EN_PLACEHOLDER}
+                              allowEmpty
+                              onSubmit={(nameEn) => setTagNameEn(tag, nameEn)}
+                              onDone={stopEditing}
+                            />
+                          ) : (
+                            <>
+                              <button
+                                type="button"
+                                className="min-w-0 flex-1 truncate text-left text-sm text-zinc-200 transition hover:text-accent-hover"
+                                title="Показать записи с этим тегом"
+                                aria-label={`Показать записи с тегом «${tagText(tag)}»`}
+                                onClick={() => onFilter(tag.id)}
+                              >
+                                {tag.name}
+                              </button>
+                              <EnName
+                                value={tag.nameEn}
+                                label={`Английское имя тега «${tag.name}»`}
+                                onEdit={() => setEditing({ kind: 'tagEn', id: tag.id })}
                               />
-                            ) : (
-                              <>
+                              <span
+                                className="shrink-0 text-xs tabular-nums text-zinc-500"
+                                title="Записей с этим тегом"
+                              >
+                                {tag.count}
+                              </span>
+                              {editing?.kind === 'move' && editing.id === tag.id ? (
+                                <select
+                                  autoFocus
+                                  aria-label={`Перенести тег «${tag.name}» в категорию`}
+                                  defaultValue=""
+                                  className="max-w-40 rounded-lg border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-200"
+                                  onChange={(e) => {
+                                    stopEditing();
+                                    void moveTag(tag, Number(e.target.value));
+                                  }}
+                                  onBlur={stopEditing}
+                                  onKeyDown={(e) => {
+                                    if (e.key !== 'Escape') return;
+                                    e.stopPropagation();
+                                    stopEditing();
+                                  }}
+                                >
+                                  <option value="" disabled>
+                                    Выберите категорию…
+                                  </option>
+                                  {catalog.categories
+                                    .filter((c) => c.id !== tag.categoryId)
+                                    .map((c) => (
+                                      <option key={c.id} value={c.id}>
+                                        {c.label}
+                                      </option>
+                                    ))}
+                                </select>
+                              ) : (
                                 <button
                                   type="button"
-                                  className="min-w-0 flex-1 truncate text-left text-sm text-zinc-200 transition hover:text-accent-hover"
-                                  title="Показать записи с этим тегом"
-                                  aria-label={`Показать записи с тегом «${tagText(tag)}»`}
-                                  onClick={() => onFilter(tag.id)}
-                                >
-                                  {tag.name}
-                                </button>
-                                <span
-                                  className="shrink-0 text-xs tabular-nums text-zinc-500"
-                                  title="Записей с этим тегом"
-                                >
-                                  {tag.count}
-                                </span>
-                                {editing?.kind === 'move' && editing.id === tag.id ? (
-                                  <select
-                                    autoFocus
-                                    aria-label={`Перенести тег «${tag.name}» в категорию`}
-                                    defaultValue=""
-                                    className="max-w-40 rounded-lg border border-zinc-700 bg-zinc-950 px-1.5 py-0.5 text-xs text-zinc-200"
-                                    onChange={(e) => {
-                                      stopEditing();
-                                      void moveTag(tag, Number(e.target.value));
-                                    }}
-                                    onBlur={stopEditing}
-                                    onKeyDown={(e) => {
-                                      if (e.key !== 'Escape') return;
-                                      e.stopPropagation();
-                                      stopEditing();
-                                    }}
-                                  >
-                                    <option value="" disabled>
-                                      Выберите категорию…
-                                    </option>
-                                    {catalog.categories
-                                      .filter((c) => c.id !== tag.categoryId)
-                                      .map((c) => (
-                                        <option key={c.id} value={c.id}>
-                                          {c.name}
-                                        </option>
-                                      ))}
-                                  </select>
-                                ) : (
-                                  <button
-                                    type="button"
-                                    aria-label={`Перенести тег «${tag.name}» в другую категорию`}
-                                    title="Перенести в другую категорию"
-                                    disabled={catalog.categories.length < 2}
-                                    className={iconButton}
-                                    onClick={() => setEditing({ kind: 'move', id: tag.id })}
-                                  >
-                                    ⇄
-                                  </button>
-                                )}
-                                <button
-                                  type="button"
-                                  aria-label={`Переименовать тег «${tag.name}»`}
-                                  title="Переименовать"
+                                  aria-label={`Перенести тег «${tag.name}» в другую категорию`}
+                                  title="Перенести в другую категорию"
+                                  disabled={catalog.categories.length < 2}
                                   className={iconButton}
-                                  onClick={() => setEditing({ kind: 'tag', id: tag.id })}
+                                  onClick={() => setEditing({ kind: 'move', id: tag.id })}
                                 >
-                                  ✎
+                                  ⇄
                                 </button>
-                                <button
-                                  type="button"
-                                  aria-label={`Удалить тег «${tag.name}»`}
-                                  title="Удалить тег"
-                                  className={`${iconButton} hover:text-red-300`}
-                                  onClick={() => removeTag(tag)}
-                                >
-                                  🗑
-                                </button>
-                              </>
-                            )}
-                          </li>
-                        );
-                      })}
+                              )}
+                              <button
+                                type="button"
+                                aria-label={`Переименовать тег «${tag.name}»`}
+                                title="Переименовать"
+                                className={iconButton}
+                                onClick={() => setEditing({ kind: 'tag', id: tag.id })}
+                              >
+                                ✎
+                              </button>
+                              <button
+                                type="button"
+                                aria-label={`Удалить тег «${tag.name}»`}
+                                title="Удалить тег"
+                                className={`${iconButton} hover:text-red-300`}
+                                onClick={() => removeTag(tag)}
+                              >
+                                🗑
+                              </button>
+                            </>
+                          )}
+                        </li>
+                      ))}
                     </ul>
                   )}
                 </section>

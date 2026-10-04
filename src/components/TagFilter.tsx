@@ -7,6 +7,7 @@ import type { FilterScope, TagFilter } from '../lib/tagFilter';
 import { tagText } from '../lib/tags';
 import type { CatalogTag } from '../lib/tags';
 import { chipButtonClass, chipClass, TagText } from './TagChip';
+import { TagCatalogList } from './TagCatalogList';
 import { TagCombobox } from './TagCombobox';
 
 const MATCH_OPTIONS: { value: TagMatch; label: string; hint: string }[] = [
@@ -57,11 +58,12 @@ function Radio<T extends string>({
 /**
  * Панель фильтра по тегам, пришвартованная справа (UF-18). Сверху - поле с
  * автодополнением и выбранные чипы, ниже - режим сочетания и область, под ними
- * весь каталог: категории и теги с числом записей; клик по тегу включает его в
- * фильтр (или выключает) - можно выбирать, не набирая текст. Фильтр действует
- * сразу, без кнопки «Применить»; панель остаётся открытой, пока её не закрыть
- * (крестиком или Esc), и результат виден тут же в галерее. canScopeFolder -
- * открыта папка или запись; в корне «в этой папке» = весь сейф.
+ * весь каталог: категории-сворки, несколько популярных тегов сразу, остальные
+ * за «Ещё N», поиск по имени; клик по тегу включает его в фильтр (или выключает)
+ * - можно выбирать, не набирая текст. Фильтр действует сразу, без кнопки
+ * «Применить»; панель остаётся открытой, пока её не закрыть (крестиком или Esc),
+ * и результат виден тут же в галерее. canScopeFolder - открыта папка или запись;
+ * в корне «в этой папке» = весь сейф.
  */
 export function FilterPanel({
   filter,
@@ -121,7 +123,7 @@ export function FilterPanel({
             {picked.map((tag) => (
               <li key={tag.id} className={chipClass()}>
                 <span className="min-w-0 truncate">
-                  <TagText category={tag.category} name={tag.name} />
+                  <TagText tag={tag} />
                 </span>
                 <button
                   type="button"
@@ -175,38 +177,13 @@ export function FilterPanel({
         <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
           Все теги
         </p>
-        {catalog.categories.length === 0 ? (
-          <p className="text-xs text-zinc-600">{catalog.ready ? 'Тегов пока нет' : 'Загрузка…'}</p>
-        ) : (
-          catalog.categories.map((c) => (
-            <section key={c.id} aria-label={`Категория ${c.name}`} className="mb-2.5">
-              <h3 className="mb-1 text-xs text-zinc-400">{c.name}</h3>
-              <div className="flex flex-wrap gap-1">
-                {c.tags.map((t) => {
-                  const tag = catalog.tags.get(t.id);
-                  if (tag === undefined) return null;
-                  const on = selected.has(t.id);
-                  return (
-                    <button
-                      key={t.id}
-                      type="button"
-                      aria-pressed={on}
-                      title={`${tagText(tag)} — записей: ${t.count}. Щёлкните, чтобы ${on ? 'убрать из' : 'добавить в'} фильтр`}
-                      className={`max-w-full truncate rounded-full border px-1.5 text-[11px] leading-5 transition ${
-                        on
-                          ? 'border-accent bg-accent/30 text-zinc-100'
-                          : 'border-zinc-700 bg-zinc-800/80 text-zinc-300 hover:border-zinc-500 hover:text-zinc-100'
-                      }`}
-                      onClick={() => onChange(on ? removeFilterTag(filter, t.id) : addFilterTag(filter, t.id))}
-                    >
-                      {t.name} <span className="text-zinc-500">{t.count}</span>
-                    </button>
-                  );
-                })}
-              </div>
-            </section>
-          ))
-        )}
+        <TagCatalogList
+          selected={selected}
+          onToggle={(tagId) =>
+            onChange(selected.has(tagId) ? removeFilterTag(filter, tagId) : addFilterTag(filter, tagId))
+          }
+          storageKey="sbx_tags_filter"
+        />
       </div>
 
       {active && (

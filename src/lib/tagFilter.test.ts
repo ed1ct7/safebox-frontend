@@ -16,12 +16,13 @@ const catalog = buildCatalog([
   {
     id: 10,
     name: 'character',
+    nameEn: '',
     tags: [
-      { id: 1, categoryId: 10, name: 'eris', count: 0 },
-      { id: 2, categoryId: 10, name: 'roxy', count: 0 },
+      { id: 1, categoryId: 10, name: 'eris', nameEn: '', count: 0 },
+      { id: 2, categoryId: 10, name: 'roxy', nameEn: '', count: 0 },
     ],
   },
-  { id: 20, name: 'language', tags: [{ id: 5, categoryId: 20, name: 'ru', count: 0 }] },
+  { id: 20, name: 'language', nameEn: '', tags: [{ id: 5, categoryId: 20, name: 'ru', nameEn: '', count: 0 }] },
 ]);
 
 const filter = (extra: Partial<TagFilter> = {}): TagFilter => ({ ...EMPTY_FILTER, ...extra });

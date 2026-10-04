@@ -9,20 +9,25 @@ import { TagsScreen } from './TagsScreen';
 
 let server: FakeServer;
 let categories: Category[];
+let tagLanguage: 'ru' | 'en';
 
 beforeEach(() => {
   categories = makeCategories();
-  server = installFakeServer({ 'GET /api/v1/tags': () => ({ json: { categories } }) });
+  tagLanguage = 'ru';
+  server = installFakeServer({
+    'GET /api/v1/tags': () => ({ json: { categories } }),
+    'GET /api/v1/settings': () => ({ json: { linkPreviews: true, tagLanguage } }),
+  });
 });
 afterEach(() => vi.unstubAllGlobals());
 
-async function setup() {
+async function setup(firstCategory = 'character') {
   const onBack = vi.fn();
   const onFilter = vi.fn();
   render(<TagsScreen onBack={onBack} onFilter={onFilter} />, { wrapper: makeWrapper().Wrapper });
   const user = userEvent.setup();
   const screenRegion = screen.getByRole('region', { name: 'Управление тегами' });
-  await within(screenRegion).findByRole('region', { name: 'Категория character' });
+  await within(screenRegion).findByRole('region', { name: `Категория ${firstCategory}` });
   return { onBack, onFilter, user, screenRegion };
 }
 
@@ -64,7 +69,7 @@ describe('TagsScreen: список', () => {
 
 describe('TagsScreen: категории', () => {
   it('создать категорию: POST /tags/categories', async () => {
-    server.routes['POST /api/v1/tags/categories'] = () => ({ status: 201, json: { id: 30, name: 'место', tags: [] } });
+    server.routes['POST /api/v1/tags/categories'] = () => ({ status: 201, json: { id: 30, name: 'место', nameEn: '', tags: [] } });
     const { user } = await setup();
     await user.type(screen.getByRole('textbox', { name: 'Название новой категории' }), 'место');
     await user.click(screen.getByRole('button', { name: 'Создать категорию' }));
@@ -86,7 +91,7 @@ describe('TagsScreen: категории', () => {
   });
 
   it('переименовать на месте: Enter -> PATCH', async () => {
-    server.routes['PATCH /api/v1/tags/categories/10'] = () => ({ json: { id: 10, name: 'персонаж', tags: [] } });
+    server.routes['PATCH /api/v1/tags/categories/10'] = () => ({ json: { id: 10, name: 'персонаж', nameEn: '', tags: [] } });
     const { user } = await setup();
     await user.click(screen.getByRole('button', { name: 'Переименовать категорию «character»' }));
     const box = screen.getByRole('textbox', { name: 'Новое имя категории' });
@@ -210,8 +215,8 @@ describe('TagsScreen: теги', () => {
 
   it('перенос в категорию, где такой тег уже есть (409) - предложение слить', async () => {
     categories = [
-      { id: 10, name: 'a', tags: [{ id: 1, categoryId: 10, name: 'x', count: 2 }] },
-      { id: 20, name: 'b', tags: [{ id: 6, categoryId: 20, name: 'X', count: 1 }] },
+      { id: 10, name: 'a', nameEn: '', tags: [{ id: 1, categoryId: 10, name: 'x', nameEn: '', count: 2 }] },
+      { id: 20, name: 'b', nameEn: '', tags: [{ id: 6, categoryId: 20, name: 'X', nameEn: '', count: 1 }] },
     ];
     server.routes['PATCH /api/v1/tags/6'] = () => apiError(409, 'already_exists', 'Такой тег уже есть');
     server.routes['POST /api/v1/tags/6/merge'] = () => ({ json: { affectedEntries: 1 } });
@@ -223,5 +228,157 @@ describe('TagsScreen: теги', () => {
     await user.click(within(dialog).getByRole('button', { name: 'Слить' }));
     await waitFor(() => expect(server.callsTo('POST', '/api/v1/tags/6/merge')).toHaveLength(1));
     expect(server.callsTo('POST', '/api/v1/tags/6/merge')[0]?.body).toEqual({ into: 1 });
+  });
+});
+
+// Второе (английское) имя тега и категории: правится на месте, пусто - «не задано»,
+// PATCH уходит с одним nameEn, основное имя не трогается.
+describe('TagsScreen: второе имя (EN)', () => {
+  const bilingual = (): Category[] => [
+    {
+      id: 10,
+      name: 'Персонаж',
+      nameEn: 'Character',
+      tags: [
+        { id: 1, categoryId: 10, name: 'Хината', nameEn: 'hyuuga hinata', count: 3 },
+        { id: 2, categoryId: 10, name: 'Рокси', nameEn: '', count: 1 },
+      ],
+    },
+    { id: 20, name: 'Язык', nameEn: '', tags: [{ id: 5, categoryId: 20, name: 'ru', nameEn: '', count: 4 }] },
+  ];
+  const tagData = (id: number) => categories.flatMap((c) => c.tags).find((t) => t.id === id)!;
+  const enOfTag = (name: string) => screen.getByRole('button', { name: `Английское имя тега «${name}»` });
+  const enOfCategory = (name: string) => screen.getByRole('button', { name: `Английское имя категории «${name}»` });
+  const patchCalls = (path: string) => server.callsTo('PATCH', path);
+
+  beforeEach(() => {
+    categories = bilingual();
+    // сервер применяет PATCH: после него список перечитывается уже с новым именем
+    server.routes['PATCH /api/v1/tags/2'] = (c) => {
+      Object.assign(tagData(2), c.body);
+      return { json: tagData(2) };
+    };
+    server.routes['PATCH /api/v1/tags/1'] = (c) => {
+      Object.assign(tagData(1), c.body);
+      return { json: tagData(1) };
+    };
+    server.routes['PATCH /api/v1/tags/categories/20'] = (c) => {
+      Object.assign(categories[1]!, c.body);
+      return { json: categories[1] };
+    };
+  });
+
+  it('оба имени рядом; пустое второе - «EN — не задано»', async () => {
+    await setup('Персонаж');
+    const items = within(category('Персонаж')).getAllByRole('listitem');
+    expect(items[0]).toHaveTextContent('Рокси'); // по подписи: Рокси, Хината
+    expect(items[0]).toHaveTextContent('EN — не задано');
+    expect(items[1]).toHaveTextContent('Хината');
+    expect(items[1]).toHaveTextContent('hyuuga hinata');
+    expect(enOfCategory('Персонаж')).toHaveTextContent('Character');
+    expect(enOfCategory('Язык')).toHaveTextContent('EN — не задано');
+  });
+
+  it('второе имя тега: Enter -> PATCH только с nameEn, список обновляется', async () => {
+    const { user } = await setup('Персонаж');
+    await user.click(enOfTag('Рокси'));
+    const box = screen.getByRole('textbox', { name: 'Английское имя тега' });
+    expect(box).toHaveValue('');
+    expect(box).toHaveAttribute('placeholder', 'EN — не задано');
+    await user.type(box, 'roxy migurdia{Enter}');
+    await waitFor(() => expect(patchCalls('/api/v1/tags/2')).toHaveLength(1));
+    expect(patchCalls('/api/v1/tags/2')[0]?.body).toEqual({ nameEn: 'roxy migurdia' });
+    expect(screen.queryByRole('textbox', { name: 'Английское имя тега' })).toBeNull();
+    await waitFor(() => expect(enOfTag('Рокси')).toHaveTextContent('roxy migurdia'));
+  });
+
+  it('второе имя категории: PATCH /tags/categories/:id только с nameEn', async () => {
+    const { user } = await setup('Персонаж');
+    await user.click(enOfCategory('Язык'));
+    await user.type(screen.getByRole('textbox', { name: 'Английское имя категории' }), 'Language{Enter}');
+    await waitFor(() => expect(patchCalls('/api/v1/tags/categories/20')).toHaveLength(1));
+    expect(patchCalls('/api/v1/tags/categories/20')[0]?.body).toEqual({ nameEn: 'Language' });
+    await waitFor(() => expect(enOfCategory('Язык')).toHaveTextContent('Language'));
+  });
+
+  it('пустое значение стирает второе имя: nameEn: ""', async () => {
+    const { user } = await setup('Персонаж');
+    await user.click(enOfTag('Хината'));
+    const box = screen.getByRole('textbox', { name: 'Английское имя тега' });
+    expect(box).toHaveValue('hyuuga hinata');
+    await user.clear(box);
+    await user.keyboard('{Enter}');
+    await waitFor(() => expect(patchCalls('/api/v1/tags/1')).toHaveLength(1));
+    expect(patchCalls('/api/v1/tags/1')[0]?.body).toEqual({ nameEn: '' });
+    await waitFor(() => expect(enOfTag('Хината')).toHaveTextContent('EN — не задано'));
+  });
+
+  it('без изменений запроса нет; Esc отменяет правку, а не закрывает экран', async () => {
+    const { user, onBack } = await setup('Персонаж');
+    await user.click(enOfTag('Хината'));
+    await user.keyboard('{Enter}'); // то же значение
+    expect(screen.queryByRole('textbox', { name: 'Английское имя тега' })).toBeNull();
+    await user.click(enOfTag('Рокси'));
+    await user.type(screen.getByRole('textbox', { name: 'Английское имя тега' }), 'x{Escape}');
+    expect(screen.queryByRole('textbox', { name: 'Английское имя тега' })).toBeNull();
+    expect(patchCalls('/api/v1/tags/1')).toHaveLength(0);
+    expect(patchCalls('/api/v1/tags/2')).toHaveLength(0);
+    expect(onBack).not.toHaveBeenCalled();
+  });
+
+  it('основное имя по-прежнему уходит отдельно: PATCH только с name', async () => {
+    const { user } = await setup('Персонаж');
+    await user.click(screen.getByRole('button', { name: 'Переименовать тег «Рокси»' }));
+    const box = screen.getByRole('textbox', { name: 'Новое имя тега' });
+    await user.clear(box);
+    await user.type(box, 'Рокси М{Enter}');
+    await waitFor(() => expect(patchCalls('/api/v1/tags/2')).toHaveLength(1));
+    expect(patchCalls('/api/v1/tags/2')[0]?.body).toEqual({ name: 'Рокси М' });
+  });
+
+  it('«:» в имени - сообщение в поле, запроса нет', async () => {
+    const { user } = await setup('Персонаж');
+    await user.click(enOfTag('Рокси'));
+    await user.type(screen.getByRole('textbox', { name: 'Английское имя тега' }), 'a:b{Enter}');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Символ «:» в имени тега запрещён');
+    expect(patchCalls('/api/v1/tags/2')).toHaveLength(0);
+  });
+
+  it('отказ сервера (409) - сообщение под полем, введённый текст остаётся', async () => {
+    server.routes['PATCH /api/v1/tags/categories/20'] = () => apiError(409, 'already_exists', 'Такое имя уже есть');
+    const { user } = await setup('Персонаж');
+    await user.click(enOfCategory('Язык'));
+    const box = screen.getByRole('textbox', { name: 'Английское имя категории' });
+    await user.type(box, 'Character{Enter}');
+    expect(await screen.findByRole('alert')).toHaveTextContent('Такое имя уже есть');
+    expect(box).toHaveValue('Character');
+  });
+
+  it('второе имя совпало с именем другого тега (409) - предложение слить', async () => {
+    server.routes['PATCH /api/v1/tags/2'] = () => apiError(409, 'already_exists', 'Такой тег уже есть');
+    server.routes['POST /api/v1/tags/2/merge'] = () => ({ json: { affectedEntries: 1 } });
+    const { user } = await setup('Персонаж');
+    await user.click(enOfTag('Рокси'));
+    await user.type(screen.getByRole('textbox', { name: 'Английское имя тега' }), 'Hyuuga Hinata{Enter}');
+    const dialog = await screen.findByRole('dialog', { name: 'Слить с существующим тегом?' });
+    expect(dialog).toHaveTextContent('«Хината» уже есть в категории «Персонаж»');
+    await user.click(within(dialog).getByRole('button', { name: 'Слить' }));
+    await waitFor(() => expect(server.callsTo('POST', '/api/v1/tags/2/merge')).toHaveLength(1));
+    expect(server.callsTo('POST', '/api/v1/tags/2/merge')[0]?.body).toEqual({ into: 1 });
+  });
+
+  it('язык тегов en: подтверждения и выбор категории - на подписях, правка - по-прежнему по именам', async () => {
+    tagLanguage = 'en';
+    const { user } = await setup('Персонаж');
+    // подпись тега в en: «Character: hyuuga hinata» (у «Рокси» второго имени нет - основное)
+    await user.click(await screen.findByRole('button', { name: 'Показать записи с тегом «Character: hyuuga hinata»' }));
+    await user.click(screen.getByRole('button', { name: 'Удалить тег «Хината»' }));
+    expect(await screen.findByRole('dialog', { name: 'Удалить тег «Character: hyuuga hinata»?' })).toBeInTheDocument();
+    await user.click(within(screen.getByRole('dialog')).getByRole('button', { name: 'Отмена' }));
+
+    await user.click(screen.getByRole('button', { name: 'Перенести тег «ru» в другую категорию' }));
+    const select = screen.getByRole('combobox', { name: 'Перенести тег «ru» в категорию' });
+    expect(within(select).getByRole('option', { name: 'Character' })).toBeInTheDocument();
+    expect(enOfTag('Хината')).toHaveTextContent('hyuuga hinata');
   });
 });

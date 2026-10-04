@@ -1,8 +1,8 @@
-/** «категория: тег»: категория приглушена, чтобы имя тега читалось первым. */
-export function TagText({ category, name }: { category: string; name: string }) {
+/** «категория: тег» на языке тегов: категория приглушена, чтобы имя тега читалось первым. */
+export function TagText({ tag }: { tag: { categoryLabel: string; label: string } }) {
   return (
     <>
-      <span className="text-zinc-500">{category}:</span> {name}
+      <span className="text-zinc-500">{tag.categoryLabel}:</span> {tag.label}
     </>
   );
 }

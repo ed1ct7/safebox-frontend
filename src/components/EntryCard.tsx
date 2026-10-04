@@ -238,7 +238,7 @@ export const EntryCard = memo(function EntryCard({
                     title={chip.inherited ? `${chip.title} (унаследован)` : chip.title}
                     className={cls}
                   >
-                    {chip.name}
+                    {chip.label}
                   </span>
                 );
               }
@@ -254,7 +254,7 @@ export const EntryCard = memo(function EntryCard({
                     handlers.onTagClick?.(chip.tagId);
                   }}
                 >
-                  {chip.name}
+                  {chip.label}
                 </button>
               );
             })}

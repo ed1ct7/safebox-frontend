@@ -38,7 +38,7 @@ function InheritedChip({
       onClick={() => onOpenSource(fromId)}
     >
       <span className="min-w-0 truncate">
-        <TagText category={tag.category} name={tag.name} />
+        <TagText tag={tag} />
       </span>
     </button>
   );
@@ -123,11 +123,11 @@ export function TagsSection({
                       title={`Показать все записи с тегом «${tagText(t)}»`}
                       onClick={() => onFilterTag(t.tagId)}
                     >
-                      <TagText category={t.category} name={t.name} />
+                      <TagText tag={t} />
                     </button>
                   ) : (
                     <span className="min-w-0 truncate">
-                      <TagText category={t.category} name={t.name} />
+                      <TagText tag={t} />
                     </span>
                   )}
                   <button

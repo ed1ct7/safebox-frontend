@@ -7,7 +7,7 @@ import {
   deleteCategory,
   deleteTag,
   mergeTag,
-  renameCategory,
+  updateCategory,
   updateTag,
 } from '../api/endpoints';
 import { invalidateTags } from '../api/queries';
@@ -44,9 +44,12 @@ export function useTagActions() {
           }),
         ),
       createCategory: (name: string) => run(() => createCategory(name)),
-      renameCategory: (id: number, name: string) => run(() => renameCategory(id, name)),
+      renameCategory: (id: number, name: string) => run(() => updateCategory(id, { name })),
+      /** второе (английское) имя; '' - стереть. Уходит один nameEn, основное имя не трогаем */
+      setCategoryNameEn: (id: number, nameEn: string) => run(() => updateCategory(id, { nameEn })),
       removeCategory: (id: number) => run(() => deleteCategory(id)),
       renameTag: (id: number, name: string) => run(() => updateTag(id, { name })),
+      setTagNameEn: (id: number, nameEn: string) => run(() => updateTag(id, { nameEn })),
       moveTag: (id: number, categoryId: number) => run(() => updateTag(id, { categoryId })),
       mergeTag: (from: number, into: number) => run(() => mergeTag(from, into)),
       removeTag: (id: number) => run(() => deleteTag(id)),

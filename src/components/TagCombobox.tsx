@@ -6,17 +6,19 @@ import { foldForSearch } from '../lib/fold';
 import { completionText, suggestTags } from '../lib/tagInput';
 import type { CreatePlan, ResolvedCreatePlan } from '../lib/tagInput';
 import { validateTagName } from '../lib/rules';
-import type { CatalogTag } from '../lib/tags';
+import { findCategory } from '../lib/tags';
+import type { CatalogTag, TagCatalog } from '../lib/tags';
 import { TagText } from './TagChip';
 
 type Option = { kind: 'tag'; tag: CatalogTag } | { kind: 'create'; plan: CreatePlan };
 
-const createLabel = (plan: CreatePlan) =>
-  plan.category === null
-    ? `Создать тег ${plan.name}…`
-    : plan.newCategory
-      ? `Создать категорию ${plan.category} и тег ${plan.name}`
-      : `Создать тег ${plan.name} в категории ${plan.category}`;
+function createLabel(plan: CreatePlan, catalog: TagCatalog): string {
+  if (plan.category === null) return `Создать тег ${plan.name}…`;
+  if (plan.newCategory) return `Создать категорию ${plan.category} и тег ${plan.name}`;
+  // существующая категория подписана на языке тегов (в плане - её основное имя)
+  const category = findCategory(catalog, plan.category)?.label ?? plan.category;
+  return `Создать тег ${plan.name} в категории ${category}`;
+}
 
 export interface TagComboboxProps {
   label: string;
@@ -305,14 +307,14 @@ export function TagCombobox({
                   {option.kind === 'tag' ? (
                     <>
                       <span className="min-w-0 truncate">
-                        <TagText category={option.tag.category} name={option.tag.name} />
+                        <TagText tag={option.tag} />
                       </span>
                       <span className="shrink-0 text-xs text-zinc-600" title="Записей с этим тегом">
                         {option.tag.count}
                       </span>
                     </>
                   ) : (
-                    <span className="min-w-0 break-words">{createLabel(option.plan)}</span>
+                    <span className="min-w-0 break-words">{createLabel(option.plan, catalog)}</span>
                   )}
                 </li>
               ))}
@@ -373,7 +375,7 @@ export function TagCombobox({
                   key={c.id}
                   type="button"
                   aria-pressed={on}
-                  title={`Положить тег в категорию «${c.name}» (${c.tags.length} тегов)`}
+                  title={`Положить тег в категорию «${c.label}» (${c.tags.length} тегов)`}
                   className={`max-w-full truncate rounded-full border px-2.5 py-1 transition ${
                     on
                       ? 'border-accent bg-accent/30 text-zinc-100'
@@ -385,7 +387,7 @@ export function TagCombobox({
                     setPickError(null);
                   }}
                 >
-                  {c.name}
+                  {c.label}
                 </button>
               );
             })}

@@ -92,7 +92,8 @@ export interface ImportResult {
 export interface Tag {
   id: number;
   categoryId: number;
-  name: string;
+  name: string; // основное имя («русское»: на деле любой текст)
+  nameEn: string; // второе имя, английское; '' — не задано
 }
 
 export interface TagWithCount extends Tag {
@@ -102,11 +103,16 @@ export interface TagWithCount extends Tag {
 export interface Category {
   id: number;
   name: string;
+  nameEn: string; // '' — не задано
   tags: TagWithCount[];
 }
 
+/** На каком языке показывать имена тегов и категорий; сам интерфейс всегда русский. */
+export type TagLanguage = 'ru' | 'en';
+
 export interface Settings {
   linkPreviews: boolean;
+  tagLanguage: TagLanguage;
 }
 
 export interface ApiError {
