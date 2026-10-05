@@ -173,7 +173,9 @@ export function FilterPanel({
         />
       </div>
 
-      <div className="min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2.5">
+      {/* [overflow-anchor:none]: выбранный тег закрепляется в начале категории, и без этого
+          браузерный scroll anchoring тянет скролл списка вверх за уехавшим чипом */}
+      <div className="[overflow-anchor:none] min-h-0 flex-1 overflow-y-auto px-3 pb-4 pt-2.5">
         <p className="mb-1.5 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
           Все теги
         </p>

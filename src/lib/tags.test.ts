@@ -310,19 +310,19 @@ describe('previewTags', () => {
   const character = () => uiCatalog.categories[0]!;
 
   it('популярные впереди, пустые в конце по имени', () => {
-    const { visible, hidden } = previewTags(character().tags, new Set(), 3);
+    const { visible, hidden } = previewTags(character().tags, 3);
     expect(visible.map((t) => t.id)).toEqual([2, 1, 4]); // roxy 9, eris 5, aqua 1
     expect(hidden).toBe(2);
   });
 
-  it('выбранные закреплены впереди, даже с пустым счётчиком', () => {
-    const { visible, hidden } = previewTags(character().tags, new Set([3]), 2);
-    expect(visible.map((t) => t.id)).toEqual([3, 2]);
+  it('порядок стабилен и не зависит от выбора - чип остаётся на месте', () => {
+    const { visible, hidden } = previewTags(character().tags, 2);
+    expect(visible.map((t) => t.id)).toEqual([2, 1]);
     expect(hidden).toBe(3);
   });
 
   it('лимит не меньше длины - видны все, скрытых нет', () => {
-    const { visible, hidden } = previewTags(character().tags, new Set(), 100);
+    const { visible, hidden } = previewTags(character().tags, 100);
     expect(visible).toHaveLength(5);
     expect(hidden).toBe(0);
   });

@@ -56,7 +56,7 @@ function CategorySection({
   onCollapsedChange,
   onFullChange,
 }: CategorySectionProps) {
-  const { visible, hidden } = previewTags(category.tags, selected, full ? category.tags.length : limit);
+  const { visible, hidden } = previewTags(category.tags, full ? category.tags.length : limit);
   const hasSelected = category.tags.some((t) => selected.has(t.id));
   return (
     <section aria-label={`Категория ${category.label}`} className="mb-2.5">
@@ -121,9 +121,10 @@ function CategorySection({
  * Каталог тегов для панелей (UF-18): слева под деревом папок и справа в фильтре.
  * Чтобы каталог не превращался в свалку, каждая категория - сворка, в раскрытой
  * видно несколько популярных тегов, остальные за «Ещё N»; поле «Фильтровать…»
- * ищет по обоим именам тегов и категорий. Выбранные теги закреплены впереди и
- * видны всегда, у свернутой категории с выбранными - точка. Состояние категорий
- * запоминается в localStorage под storageKey (у панелей оно отдельное).
+ * ищет по обоим именам тегов и категорий. Выбранные теги подсвечиваются и
+ * остаются на месте (порядок стабилен), у свернутой категории с выбранными -
+ * точка. Состояние категорий запоминается в localStorage под storageKey
+ * (у панелей оно отдельное).
  */
 export function TagCatalogList({
   selected,

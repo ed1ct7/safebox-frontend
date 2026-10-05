@@ -7,7 +7,8 @@ import { makeWrapper } from '../test/tags';
 import { TagCatalogList } from './TagCatalogList';
 
 // Каталог тегов для панелей (UF-18): сворки категорий, компактный вид «популярные
-// + Ещё N», поиск по имени, закрепление выбранных; состояние сворок - в localStorage.
+// + Ещё N», поиск по имени; выбранные подсвечиваются, не меняя порядка;
+// состояние сворок - в localStorage.
 
 let categories: Category[];
 
@@ -94,14 +95,21 @@ describe('выбранные теги', () => {
     ];
   });
 
-  it('выбранный тег закреплен впереди и виден в компактном виде; клик переключает', async () => {
-    const { onToggle, user } = mount(new Set([3]), 2);
+  it('выбранный тег остаётся на месте и подсвечен; клик переключает', async () => {
+    const { onToggle, user } = mount(new Set([2]), 2);
     const section = await screen.findByRole('region', { name: 'Категория character' });
-    expect(within(section).getByRole('button', { name: 'hinata 0' })).toHaveAttribute('aria-pressed', 'true');
-    expect(within(section).getByRole('button', { name: 'eris 5' })).toBeInTheDocument();
-    expect(within(section).queryByRole('button', { name: 'roxy 3' })).toBeNull();
-    await user.click(within(section).getByRole('button', { name: 'hinata 0' }));
-    expect(onToggle).toHaveBeenCalledWith(3);
+    // порядок только по счётчикам: eris и roxy в компактном виде, roxy выбран
+    expect(within(section).getByRole('button', { name: 'eris 5' })).toHaveAttribute('aria-pressed', 'false');
+    expect(within(section).getByRole('button', { name: 'roxy 3' })).toHaveAttribute('aria-pressed', 'true');
+    await user.click(within(section).getByRole('button', { name: 'roxy 3' }));
+    expect(onToggle).toHaveBeenCalledWith(2);
+  });
+
+  it('выбранный тег с малым счётчиком не лезет в компактный вид - за «Ещё N»', async () => {
+    mount(new Set([3]), 2);
+    const section = await screen.findByRole('region', { name: 'Категория character' });
+    expect(within(section).queryByRole('button', { name: 'hinata 0' })).toBeNull();
+    expect(within(section).getByRole('button', { name: 'Ещё 2…' })).toBeInTheDocument();
   });
 
   it('у свернутой категории с выбранными - точка-метка, без выбранных - нет', async () => {

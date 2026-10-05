@@ -817,7 +817,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       />
 
       <div className="flex min-h-0 flex-1">
-        <aside className="w-60 shrink-0 overflow-y-auto border-r border-zinc-800 py-3">
+        {/* [overflow-anchor:none]: выбранный тег закрепляется в начале категории, и без этого
+            браузерный scroll anchoring тянет скролл колонки вверх за уехавшим чипом */}
+        <aside className="[overflow-anchor:none] w-60 shrink-0 overflow-y-auto border-r border-zinc-800 py-3">
           <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
             Папки
           </p>
