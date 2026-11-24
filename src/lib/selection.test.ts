@@ -48,4 +48,23 @@ describe('stepIndex', () => {
     expect(stepIndex(5, 2, 'End')).toBe(4);
     expect(stepIndex(0, -1, 'End')).toBe(-1);
   });
+
+  it('сетка: ↑/↓ на ряд, у краёв на месте', () => {
+    // 10 карточек по 4 в ряд: 0-3, 4-7, 8-9
+    expect(stepIndex(10, 1, 'ArrowDown', 4)).toBe(5);
+    expect(stepIndex(10, 5, 'ArrowUp', 4)).toBe(1);
+    expect(stepIndex(10, 1, 'ArrowUp', 4)).toBe(1);
+    expect(stepIndex(10, 9, 'ArrowDown', 4)).toBe(9);
+  });
+
+  it('сетка: ↓ из ряда над неполным - на последнюю', () => {
+    expect(stepIndex(10, 7, 'ArrowDown', 4)).toBe(9);
+    expect(stepIndex(10, 5, 'ArrowDown', 4)).toBe(9);
+    expect(stepIndex(10, 4, 'ArrowDown', 4)).toBe(8);
+  });
+
+  it('сетка без выделения: ↓ с начала, ↑ с конца', () => {
+    expect(stepIndex(10, -1, 'ArrowDown', 4)).toBe(0);
+    expect(stepIndex(10, -1, 'ArrowUp', 4)).toBe(9);
+  });
 });

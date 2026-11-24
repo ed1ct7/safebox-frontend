@@ -8,7 +8,7 @@ import type { TreeDrop } from '../components/FolderTree';
 import { canMoveTo, dragIdsFor, DRAG_MIME } from '../lib/move';
 import type { Selection } from '../lib/selection';
 import { subtreeIds } from '../lib/tree';
-import { useEvent } from './useEvent';
+import { useEvent, useWindowEvent } from './useEvent';
 
 /**
  * Перетаскивание карточек (UF-14): одной или всех выделенных - на карточку папки
@@ -44,6 +44,15 @@ export function useEntryDnd({
 
   const dragEnd = useEvent(() => {
     drag.current = null;
+  });
+  // карточку-источник могла убрать виртуальная сетка (К2): её dragend до React не дойдёт.
+  // Тогда забываем перенос по первому движению мыши после него (во время переноса
+  // pointermove не приходит) и по чужому переносу (файлы из проводника) над окном.
+  useWindowEvent('pointermove', () => {
+    drag.current = null;
+  });
+  useWindowEvent('dragenter', (e) => {
+    if (e.dataTransfer?.types.includes(DRAG_MIME) !== true) drag.current = null;
   });
 
   const canDrop = useEvent((target: number | null) => {

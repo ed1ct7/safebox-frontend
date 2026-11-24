@@ -2,7 +2,6 @@ import { describe, expect, it } from 'vitest';
 import type { CreateLinksResponse, ImportResult } from '../api/types';
 import {
   bookmarksSummary,
-  deleteWarning,
   firstLine,
   formatBytes,
   formatDateTime,
@@ -207,24 +206,6 @@ describe('bookmarksSummary (UF-20)', () => {
       text: 'В файле нет закладок',
       kind: 'info',
     });
-  });
-});
-
-describe('deleteWarning', () => {
-  const folder = { kind: 'folder', childCount: 0 } as const;
-  const photo = { kind: 'photo', childCount: 0 } as const;
-  const photoWithAttachments = { kind: 'photo', childCount: 2 } as const;
-
-  it('нечего предупреждать - пусто', () => {
-    expect(deleteWarning([photo])).toBe('');
-  });
-
-  it('папка, вложения или и то и другое', () => {
-    expect(deleteWarning([folder])).toBe('Папки удаляются вместе со всем содержимым.\n');
-    expect(deleteWarning([photoWithAttachments])).toBe('Записи с вложениями удаляются вместе с вложениями.\n');
-    expect(deleteWarning([folder, photoWithAttachments, photo])).toBe(
-      'Папки и записи с вложениями удаляются вместе со всем содержимым.\n',
-    );
   });
 });
 

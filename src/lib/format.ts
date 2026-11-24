@@ -1,4 +1,4 @@
-import type { CreateLinksResponse, Entry, ImportResult, MoveResult } from '../api/types';
+import type { CreateLinksResponse, ImportResult, MoveResult } from '../api/types';
 
 const UNITS = ['КБ', 'МБ', 'ГБ', 'ТБ'] as const;
 
@@ -121,19 +121,6 @@ export function bookmarksSummary(t: BookmarksTotals): ToastSpec {
   if (t.existing > 0) parts.push(`уже было ${t.existing}`);
   if (t.invalid > 0) parts.push(`некорректных ${t.invalid}`);
   return { text: `Закладки: ${parts.join(', ')}`, kind: t.created + t.existing > 0 ? 'success' : 'info' };
-}
-
-/**
- * Предупреждение при удалении (UF-10): папки и записи с вложениями уходят
- * вместе с содержимым. Пустая строка или строка с переводом строки в конце.
- */
-export function deleteWarning(entries: readonly Pick<Entry, 'kind' | 'childCount'>[]): string {
-  const folders = entries.some((e) => e.kind === 'folder');
-  const attachments = entries.some((e) => e.kind !== 'folder' && e.childCount > 0);
-  if (folders && attachments) return 'Папки и записи с вложениями удаляются вместе со всем содержимым.\n';
-  if (folders) return 'Папки удаляются вместе со всем содержимым.\n';
-  if (attachments) return 'Записи с вложениями удаляются вместе с вложениями.\n';
-  return '';
 }
 
 /** Первая непустая строка описания: для карточки ссылки и всплывающих подсказок (UF-22). */

@@ -195,10 +195,13 @@ describe('вложения (UF-14)', () => {
     expect(mocks.triggerDownload).toHaveBeenLastCalledWith('/api/v1/media/1/download');
   });
 
-  it('удаление записи с вложениями предупреждает о вложениях', async () => {
+  it('«Удалить» из меню - сразу в корзину, без вопроса', async () => {
+    overrides['DELETE /api/v1/entries/1'] = () => ({ json: { removed: 1 } });
     await renderShell();
     await menuAction('кот.jpg', 'Удалить');
-    expect(await screen.findByText(/Записи с вложениями удаляются вместе с вложениями/)).toBeInTheDocument();
+    await waitFor(() => expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(1));
+    expect(await screen.findByText(/В корзину: 1 объект/)).toBeInTheDocument();
+    expect(screen.queryByRole('dialog', { name: /Удалить/ })).toBeNull();
   });
 });
 
@@ -550,64 +553,255 @@ describe('Ctrl+A - выделить всё в текущем виде (UF-9)', (
   });
 });
 
-describe('Delete с подтверждением', () => {
+describe('модель B: клик выделяет, двойной клик открывает', () => {
+  it('клик выделяет и не открывает; двойной клик открывает просмотр', async () => {
+    await renderShell();
+    fireEvent.click(cardOf('кот.jpg'));
+    expect(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    fireEvent.doubleClick(cardOf('кот.jpg'));
+    expect(await screen.findByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
+  });
+
+  it('двойной клик по папке переходит в неё', async () => {
+    await renderShell();
+    fireEvent.doubleClick(cardOf('Папка'));
+    await waitFor(() => expect(calls.some((c) => c.path === '/api/v1/entries' && c.query.get('parentId') === '3')).toBe(true));
+  });
+
+  it('пробел - быстрый просмотр выделенного фото, пробел в просмотре закрывает', async () => {
+    await renderShell();
+    fireEvent.click(cardOf('кот.jpg'));
+    fireEvent.keyDown(window, { key: ' ' });
+    expect(await screen.findByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: ' ' });
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Просмотр фото' })).toBeNull());
+  });
+
+  it('Shift+стрелка расширяет выделение', async () => {
+    await renderShell();
+    fireEvent.click(cardOf('Папка'));
+    fireEvent.keyDown(window, { key: 'ArrowRight', shiftKey: true });
+    expect(screen.getByRole('checkbox', { name: 'Выбрать «Папка»' })).toHaveAttribute('aria-checked', 'true');
+    expect(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' })).toHaveAttribute('aria-checked', 'true');
+  });
+
+  it('↑/↓ ходят по строкам сетки (колонки - по offsetTop карточек)', async () => {
+    // jsdom не раскладывает: две колонки - строка карточки по её номеру среди карточек
+    const spy = vi.spyOn(HTMLElement.prototype, 'offsetTop', 'get').mockImplementation(function (this: HTMLElement) {
+      const cards = [...document.querySelectorAll('[data-entry-id]')];
+      const i = cards.indexOf(this);
+      return i < 0 ? 0 : Math.floor(i / 2) * 100;
+    });
+    try {
+      await renderShell();
+      const checked = (name: string) => screen.getByRole('checkbox', { name: `Выбрать «${name}»` }).getAttribute('aria-checked');
+      fireEvent.click(cardOf('Папка'));
+      fireEvent.keyDown(window, { key: 'ArrowDown' });
+      expect(checked('Пример')).toBe('true'); // Папка | кот.jpg / Пример
+      expect(checked('Папка')).toBe('false');
+      fireEvent.keyDown(window, { key: 'ArrowUp' });
+      expect(checked('Папка')).toBe('true');
+      fireEvent.click(cardOf('кот.jpg'));
+      fireEvent.keyDown(window, { key: 'ArrowDown' }); // под ним пусто - на последнюю
+      expect(checked('Пример')).toBe('true');
+    } finally {
+      spy.mockRestore();
+    }
+  });
+});
+
+describe('Delete - в корзину', () => {
   const dogPhoto = makeEntry({ id: 24, kind: 'photo', name: 'пёс.jpg' });
 
   beforeEach(() => {
     overrides['DELETE /api/v1/entries/1'] = () => ({ json: { removed: 1 } });
+    overrides['POST /api/v1/trash/restore'] = () => ({ json: { restored: 1, renamed: [] } });
   });
 
-  it('по выделению в галерее: Delete спрашивает подтверждение и удаляет', async () => {
+  it('по выделению в галерее: Delete сразу в корзину, «Отменить» возвращает', async () => {
     const { user } = await renderShell();
     await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
     fireEvent.keyDown(window, { key: 'Delete' });
-    const dialog = await screen.findByRole('dialog', { name: 'Удалить «кот.jpg»?' });
-    await user.click(within(dialog).getByRole('button', { name: 'Удалить' }));
     await waitFor(() => expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(1));
+    expect(screen.queryByRole('dialog', { name: /Удалить/ })).toBeNull();
+    await user.click(await screen.findByRole('button', { name: 'Отменить' }));
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/restore')).toHaveLength(1));
+    expect(callsTo('POST', '/api/v1/trash/restore')[0]?.body).toEqual({ ids: [1] });
+    expect(await screen.findByText(/Восстановлено: 1 объект/)).toBeInTheDocument();
   });
 
-  it('в просмотре фото: Delete удаляет текущее, показывается следующее', async () => {
+  it('Ctrl+Z возвращает последнее удалённое; второй раз и «Отменить» после - нечего', async () => {
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await screen.findByText(/В корзину: 1 объект/);
+    fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', ctrlKey: true });
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/restore')).toHaveLength(1));
+    await screen.findByText(/Восстановлено/);
+    fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', ctrlKey: true });
+    await user.click(screen.getByRole('button', { name: 'Отменить' }));
+    expect(callsTo('POST', '/api/v1/trash/restore')).toHaveLength(1);
+  });
+
+  it('в просмотре фото: Delete сразу в корзину, показывается следующее', async () => {
     overrides['GET /api/v1/entries'] = () => ({
       json: { ...rootListing, entries: [folder, photo, dogPhoto, link] },
     });
-    render(
-      <QueryClientProvider client={new QueryClient({ defaultOptions: { queries: { retry: false } } })}>
-        <ToastProvider>
-          <MainShell onLocked={vi.fn()} />
-        </ToastProvider>
-      </QueryClientProvider>,
-    );
-    const user = userEvent.setup();
-    await screen.findAllByText('пёс.jpg');
-    fireEvent.click(screen.getByTitle(/^кот\.jpg/).closest('[data-entry-id]') as HTMLElement);
+    await renderShell();
+    fireEvent.doubleClick(cardOf('кот.jpg'));
     await screen.findByRole('dialog', { name: 'Просмотр фото' });
     fireEvent.keyDown(window, { key: 'Delete' });
-    const confirm = await screen.findByRole('dialog', { name: 'Удалить «кот.jpg»?' });
-    await user.click(within(confirm).getByRole('button', { name: 'Удалить' }));
     await waitFor(() => expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(1));
     const viewer = await screen.findByRole('dialog', { name: 'Просмотр фото' });
-    expect(within(viewer).getByText('пёс.jpg')).toBeInTheDocument(); // следующий кадр на месте удалённого
+    await waitFor(() => expect(within(viewer).getByText('пёс.jpg')).toBeInTheDocument()); // следующий на месте удалённого
     expect(within(viewer).queryByText('кот.jpg')).toBeNull();
   });
 
-  it('Esc при стопке (просмотрщик + подтверждение) закрывает только подтверждение', async () => {
+  it('в поле ввода Delete правит текст, а не удаляет выделенное', async () => {
     const { user } = await renderShell();
-    fireEvent.click(screen.getByTitle(/^кот\.jpg/).closest('[data-entry-id]') as HTMLElement);
-    await screen.findByRole('dialog', { name: 'Просмотр фото' });
-    fireEvent.keyDown(window, { key: 'Delete' });
-    await screen.findByRole('dialog', { name: 'Удалить «кот.jpg»?' });
-    await user.keyboard('{Escape}');
-    expect(screen.queryByRole('dialog', { name: 'Удалить «кот.jpg»?' })).toBeNull();
-    expect(screen.getByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
-  });
-
-  it('в поле ввода Delete правит текст, а не удаляет карточки', async () => {
-    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
     const search = screen.getByLabelText('Поиск по именам во всём сейфе');
     await user.click(search);
-    await user.type(search, 'кот');
     fireEvent.keyDown(search, { key: 'Delete' });
-    expect(screen.queryByRole('dialog', { name: /Удалить/ })).toBeNull();
+    await new Promise((r) => setTimeout(r, 50));
+    expect(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' })).toHaveAttribute('aria-checked', 'true');
+    expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(0);
+  });
+
+  it('автоповтор зажатого Delete не удаляет', async () => {
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    fireEvent.keyDown(window, { key: 'Delete', repeat: true });
+    await new Promise((r) => setTimeout(r, 50));
+    expect(callsTo('DELETE', '/api/v1/entries/1')).toHaveLength(0);
+  });
+
+  it('не вернулось с сервера - Ctrl+Z можно повторить', async () => {
+    let fail = true;
+    overrides['POST /api/v1/trash/restore'] = () =>
+      fail ? { status: 503, json: { error: { code: 'busy', message: 'Сервер занят' } } } : { json: { restored: 1, renamed: [] } };
+    const { user } = await renderShell();
+    await user.click(screen.getByRole('checkbox', { name: 'Выбрать «кот.jpg»' }));
+    fireEvent.keyDown(window, { key: 'Delete' });
+    await screen.findByText(/В корзину: 1 объект/);
+    fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', ctrlKey: true });
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/restore')).toHaveLength(1));
+    await screen.findByText(/Сервер занят|Не удалось вернуть/);
+    fail = false;
+    fireEvent.keyDown(window, { key: 'z', code: 'KeyZ', ctrlKey: true });
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/restore')).toHaveLength(2));
+    expect(await screen.findByText(/Восстановлено: 1 объект/)).toBeInTheDocument();
+  });
+});
+
+describe('большая папка (К2): страницами', () => {
+  const many = [photo, ...Array.from({ length: 249 }, (_, i) => makeEntry({ id: 1000 + i, kind: 'photo', name: `ф${i}.jpg` }))];
+  const page = (c: Call) => {
+    const offset = Number(c.query.get('offset') ?? 0);
+    const limit = Number(c.query.get('limit') ?? many.length);
+    return { parent: null, path: [], entries: many.slice(offset, offset + limit), total: many.length };
+  };
+
+  it('первая страница сразу, остальные догружаются; на экране вся папка', async () => {
+    overrides['GET /api/v1/entries'] = (c) => ({ json: page(c) });
+    await renderShell();
+    await waitFor(() => expect(document.querySelectorAll('[data-entry-id]')).toHaveLength(250));
+    const reads = callsTo('GET', '/api/v1/entries');
+    expect(reads.map((c) => [c.query.get('offset'), c.query.get('limit')])).toEqual([
+      [null, '200'],
+      ['200', '2000'],
+    ]);
+  });
+
+  it('страница не загрузилась - видно в строке состояния, загруженное на месте', async () => {
+    overrides['GET /api/v1/entries'] = (c) =>
+      c.query.get('offset') === null ? { json: page(c) } : { status: 500, json: { error: { code: 'internal', message: 'сбой' } } };
+    await renderShell();
+    expect(await screen.findByText(/загрузка прервана: 200 из 250/)).toBeInTheDocument();
+    expect(document.querySelectorAll('[data-entry-id]')).toHaveLength(200);
+    // «выделить всё» по неполной папке не выделяет часть (Delete удалил бы не всё)
+    fireEvent.keyDown(window, { key: 'a', ctrlKey: true });
+    expect(await screen.findByText(/Ещё загружается: 200 из 250 /)).toBeInTheDocument();
+    expect(screen.queryByText(/Выбрано/)).not.toBeInTheDocument();
+  });
+
+  it('папка поменялась между страницами - перечитывается целиком', async () => {
+    let shifted = true; // вторая страница в первый раз - уже после вставки записи
+    overrides['GET /api/v1/entries'] = (c) => {
+      const p = page(c);
+      if (c.query.get('offset') !== null && shifted) {
+        shifted = false;
+        return { json: { ...p, total: many.length + 1 } };
+      }
+      return { json: p };
+    };
+    await renderShell();
+    await waitFor(
+      () =>
+        expect(callsTo('GET', '/api/v1/entries').map((c) => c.query.get('offset'))).toEqual([null, '200', null, '200']),
+      { timeout: 3000 },
+    );
+    await waitFor(() => expect(document.querySelectorAll('[data-entry-id]')).toHaveLength(250));
+  });
+});
+
+describe('корзина', () => {
+  const trashed = { ...makeEntry({ id: 9, kind: 'photo', name: 'старое.jpg' }), trashedAt: 1_700_000_000_000, location: [{ id: 3, name: 'Папка' }] };
+
+  beforeEach(() => {
+    overrides['GET /api/v1/trash'] = () => ({ json: { entries: [trashed], total: 1 } });
+    overrides['POST /api/v1/trash/restore'] = () => ({ json: { restored: 1, renamed: [{ id: 9, name: 'старое (2).jpg' }] } });
+    overrides['POST /api/v1/trash/purge'] = () => ({ json: { purged: 1 } });
+  });
+
+  it('пункт под деревом со счётчиком открывает корзину: откуда удалено', async () => {
+    const { user } = await renderShell();
+    await user.click(await screen.findByRole('button', { name: /Корзина\s*1/ }));
+    const view = await screen.findByRole('region', { name: 'Корзина' });
+    expect(await within(view).findByText('старое.jpg')).toBeInTheDocument();
+    expect(within(view).getByText('Все объекты / Папка')).toBeInTheDocument();
+  });
+
+  it('«Восстановить» выделенное; занятое имя - в тосте', async () => {
+    const { user } = await renderShell();
+    await user.click(await screen.findByRole('button', { name: /Корзина/ }));
+    await user.click(await screen.findByText('старое.jpg'));
+    await user.click(screen.getByRole('button', { name: 'Восстановить' }));
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/restore')[0]?.body).toEqual({ ids: [9] }));
+    expect(await screen.findByText(/старое \(2\)\.jpg/)).toBeInTheDocument();
+  });
+
+  it('«Удалить навсегда» и «Очистить корзину» - только после подтверждения', async () => {
+    const { user } = await renderShell();
+    await user.click(await screen.findByRole('button', { name: /Корзина/ }));
+    await user.click(await screen.findByText('старое.jpg'));
+    fireEvent.keyDown(window, { key: 'Delete' });
+    const dialog = await screen.findByRole('dialog', { name: 'Удалить «старое.jpg» навсегда?' });
+    expect(callsTo('POST', '/api/v1/trash/purge')).toHaveLength(0);
+    await user.click(within(dialog).getByRole('button', { name: 'Удалить навсегда' }));
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/purge')[0]?.body).toEqual({ ids: [9] }));
+
+    await user.click(screen.getByRole('button', { name: 'Очистить корзину' }));
+    const all = await screen.findByRole('dialog', { name: 'Очистить корзину?' });
+    await user.click(within(all).getByRole('button', { name: 'Очистить' }));
+    await waitFor(() => expect(callsTo('POST', '/api/v1/trash/purge')[1]?.body).toEqual({ all: true }));
+  });
+
+  it('поиск закрывает корзину', async () => {
+    const { user } = await renderShell();
+    await user.click(await screen.findByRole('button', { name: /Корзина/ }));
+    await screen.findByRole('region', { name: 'Корзина' });
+    await user.type(screen.getByLabelText('Поиск по именам во всём сейфе'), 'к');
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Корзина' })).toBeNull());
+  });
+
+  it('клик по папке в дереве закрывает корзину', async () => {
+    const { user } = await renderShell();
+    await user.click(await screen.findByRole('button', { name: /Корзина/ }));
+    await screen.findByRole('region', { name: 'Корзина' });
+    await user.click(within(screen.getByRole('navigation', { name: 'Папки' })).getByTitle('Папка'));
+    await waitFor(() => expect(screen.queryByRole('region', { name: 'Корзина' })).toBeNull());
   });
 });
 
@@ -633,10 +827,25 @@ describe('ссылка (UF-6)', () => {
     expect(await screen.findByText('Сайт не ответил за 10 секунд')).toBeInTheDocument();
   });
 
-  it('клик по ссылке по-прежнему спрашивает подтверждение', async () => {
+  it('двойной клик по ссылке по-прежнему спрашивает подтверждение', async () => {
     await renderShell();
-    fireEvent.click(cardOf('Пример'));
+    fireEvent.doubleClick(cardOf('Пример'));
     expect(await screen.findByRole('dialog', { name: 'Открыть внешнюю ссылку' })).toBeInTheDocument();
+  });
+
+  it('ролик YouTube играет в просмотрщике (youtube-nocookie), без подтверждения', async () => {
+    const yt = makeEntry({ id: 7, kind: 'link', name: 'Ролик', url: 'https://youtu.be/jNQXAC9IVRw?t=5', domain: 'youtu.be' });
+    overrides['GET /api/v1/entries'] = () => ({ json: { ...rootListing, entries: [folder, photo, link, yt] } });
+    await renderShell();
+    fireEvent.doubleClick(cardOf('Ролик'));
+    const viewer = await screen.findByRole('dialog', { name: 'Просмотр ролика' });
+    const frame = viewer.querySelector('iframe');
+    expect(frame?.getAttribute('src')).toMatch(/^https:\/\/www\.youtube-nocookie\.com\/embed\/jNQXAC9IVRw\?.*start=5/);
+    expect(frame?.getAttribute('referrerpolicy')).toBe('strict-origin-when-cross-origin');
+    expect(screen.queryByRole('dialog', { name: 'Открыть внешнюю ссылку' })).toBeNull();
+    // ← листает к фото того же вида
+    fireEvent.keyDown(window, { key: 'ArrowLeft' });
+    expect(await screen.findByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
   });
 });
 

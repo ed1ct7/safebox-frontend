@@ -1,7 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import { act, render, waitFor } from '@testing-library/react';
+import { boxesIntersect } from '../lib/rubberBand';
 import { useRubberBand } from './useRubberBand';
-import type { RubberCard } from './useRubberBand';
+
+interface RubberCard {
+  id: number;
+  el: HTMLElement;
+}
 
 // Элементы с настоящими прямоугольниками: в jsdom их нет, подставляем свои.
 function card(id: number, left: number, top: number): RubberCard {
@@ -28,7 +33,7 @@ function Harness({
 }) {
   const rubber = useRubberBand({
     isBackground: isBackground as never,
-    getCards: () => cards,
+    getHits: (band) => cards.filter((c) => boxesIntersect(c.el.getBoundingClientRect(), band)).map((c) => c.id),
     getBase: () => base,
     onSelect,
     getViewport: () => viewport as HTMLElement | null,

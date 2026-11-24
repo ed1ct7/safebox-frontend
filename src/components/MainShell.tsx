@@ -1,17 +1,26 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { DragEvent, MouseEvent } from 'react';
-import { keepPreviousData, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   attachmentsZipUrlOf,
   deleteEntries,
   downloadUrlOf,
   lockSafe,
   refreshPreview,
+  restoreFromTrash,
   updateEntry,
 } from '../api/endpoints';
 import type { PendingFile } from '../api/endpoints';
 import { ApiRequestError, errorMessage, isUnauthorized } from '../api/client';
-import { entryQuery, invalidateContent, listingQuery, searchQuery, statusQuery } from '../api/queries';
+import {
+  entryQuery,
+  invalidateContent,
+  listingQuery,
+  patchCachedEntries,
+  searchQuery,
+  statusQuery,
+  trashCountQuery,
+} from '../api/queries';
 import type { Entry, EntryPatch } from '../api/types';
 import {
   copyText,
@@ -22,8 +31,7 @@ import {
 } from '../lib/dom';
 import { dragKind, filesFromDataTransfer, linkTextFromDataTransfer, pastedFile } from '../lib/dnd';
 import { foldForSearch } from '../lib/fold';
-import { deleteWarning, firstLine, plural } from '../lib/format';
-import { displayName } from '../lib/link';
+import { firstLine, plural } from '../lib/format';
 import type { MenuAction } from '../lib/menu';
 import { isNavKey } from '../lib/selection';
 import { EMPTY_FILTER, filterSummary, isFilterActive, pruneFilterTags, searchOptionsFor } from '../lib/tagFilter';
@@ -40,6 +48,7 @@ import { useImporter } from '../hooks/useImporter';
 import { useLinks } from '../hooks/useLinks';
 import { useMoveEntries } from '../hooks/useMoveEntries';
 import { useRubberBand } from '../hooks/useRubberBand';
+import { useAllPages, usePreviewPoll } from '../hooks/usePagedContent';
 import { useSelection } from '../hooks/useSelection';
 import { TagCatalogProvider, useTagCatalog } from '../hooks/useTagCatalog';
 import { bumpThumbnail } from '../hooks/useThumbnailSrc';
@@ -51,11 +60,11 @@ import type { ContextMenuState } from './ContextMenu';
 import type { EntryCardHandlers } from './EntryCard';
 import { FolderTree } from './FolderTree';
 import { Gallery } from './Gallery';
-import type { DisplayItem } from './Gallery';
+import type { DisplayItem, GalleryHandle } from './Gallery';
 import { IdleWarning } from './IdleWarning';
 import { ImportPanel } from './ImportPanel';
 import { LinkConfirm } from './LinkConfirm';
-import { Lightbox } from './Lightbox';
+import { isViewable, MediaViewer } from './MediaViewer';
 import { anyModalOpen } from './Modal';
 import { MoveDialog } from './MoveDialog';
 import { PropertiesPanel } from './PropertiesPanel';
@@ -67,15 +76,14 @@ import { TagSidebar } from './TagSidebar';
 import { TagsScreen } from './TagsScreen';
 import { TopBar } from './TopBar';
 import { useToast } from './Toasts';
-import { VideoModal } from './VideoModal';
+import { restoreSummary, TrashView } from './TrashView';
 
 const SEARCH_DEBOUNCE_MS = 240; // UF-8
 const FRESH_MS = 3000; // сколько подсвечена новая ссылка
 const NO_FRESH: ReadonlySet<number> = new Set();
 
 type Viewer =
-  | { kind: 'photos'; photos: Entry[]; index: number }
-  | { kind: 'video'; entry: Entry }
+  | { kind: 'media'; items: Entry[]; index: number } // фото, видео, ролики YouTube
   | { kind: 'link'; entry: Entry };
 
 /** Главное окно: слева дерево и свойства записи, сверху крошки и поиск, в центре
@@ -119,6 +127,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const showResults = isSearch || isFilter;
   const [filterOpen, setFilterOpen] = useState(false); // панель фильтра справа
   const [tagsOpen, setTagsOpen] = useState(false);
+  const [trashOpen, setTrashOpen] = useState(false); // вместо галереи - корзина
 
   // тег удалили или слили - из фильтра он уходит (сервер на неизвестный id отвечает 422)
   useEffect(() => setFilter((f) => pruneFilterTags(f, catalog)), [catalog]);
@@ -127,6 +136,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   const status = useQuery(statusQuery);
   const safe = status.data?.safe;
+  const trashCount = useQuery(trashCountQuery).data ?? 0;
 
   useEffect(() => {
     // токен умер (блокировка в другой вкладке и т.п.) — на экран входа
@@ -135,16 +145,22 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   // «в этой папке» - within открытой папки или записи; без тегов параметров нет
   const filterOptions = useMemo(() => searchOptionsFor(filter, folderId), [filter, folderId]);
-  const listing = useQuery({
+  // К2: выдача страницами - первая сразу на экране, остальные догружаются подряд
+  const listing = useInfiniteQuery({
     ...listingQuery(folderId),
     enabled: !showResults,
     placeholderData: keepPreviousData,
   });
-  const search = useQuery({
+  const search = useInfiniteQuery({
     ...searchQuery(isSearch ? committedQuery : '', filterOptions),
     enabled: showResults,
     placeholderData: keepPreviousData,
   });
+  useAllPages(listing, !showResults);
+  useAllPages(search, showResults);
+  const content = showResults ? search : listing;
+  const total = (showResults ? search.data?.total : listing.data?.total) ?? 0;
+  const complete = (showResults ? search.data?.complete : listing.data?.complete) ?? true;
 
   // крошки открытой папки (для «удалили открытую папку — на родителя»)
   const folderPath = listing.isPlaceholderData ? undefined : listing.data?.path;
@@ -172,6 +188,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   const entries = useMemo(() => baseItems.map((d) => d.entry), [baseItems]);
   const visibleIds = useMemo(() => entries.map((e) => e.id), [entries]);
+  usePreviewPoll(entries); // ссылки с предпросмотром в очереди - точечно, без перечитывания папки
   const selection = useSelection(visibleIds);
   const { clear: clearSelection, toggle: toggleSelect, replace: replaceSelection } = selection; // стабильные
 
@@ -180,23 +197,16 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   // ── Рамка выделения (UF-9, «как в проводнике») ────────────────────────────
 
   const mainRef = useRef<HTMLElement>(null);
+  const galleryRef = useRef<GalleryHandle | null>(null); // геометрия сетки: колонки, прокрутка, рамка
   const selectedRef = useRef(selection.selected);
   selectedRef.current = selection.selected;
-  const rubberCards = useCallback(
-    () =>
-      Array.from(mainRef.current?.querySelectorAll<HTMLElement>('[data-entry-id]') ?? []).map((el) => ({
-        id: Number(el.dataset.entryId),
-        el,
-      })),
-    [],
-  );
   const rubber = useRubberBand({
     // тот же «фон», что у клика-сброса: сам main и сетка между карточками
     isBackground: (e) => {
       const t = e.target as HTMLElement;
       return t === e.currentTarget || t.dataset.gallery !== undefined;
     },
-    getCards: rubberCards,
+    getHits: (band) => galleryRef.current?.hitTest(band) ?? [],
     getBase: () => selectedRef.current,
     onSelect: replaceSelection,
     getViewport: () => mainRef.current, // автоскролл у кромок при протяжке
@@ -223,7 +233,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       setCommittedQuery('');
       setFilter((f) => (isFilterActive(f) ? { ...f, tags: [] } : f)); // клик по папке сбрасывает и фильтр
       setTagsOpen(false);
+      setTrashOpen(false);
       setRenamingId(null);
+      setReveal(null); // «показать запись» из прошлой папки не срабатывает в новой
       clearSelection();
     },
     [clearSelection],
@@ -268,22 +280,26 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   // ── Действия ──────────────────────────────────────────────────────────────
 
+  // просмотрщик листает фото, видео и ролики текущего вида
+  const viewMedia = useEvent((entry: Entry) => {
+    const items = entries.filter(isViewable);
+    const index = Math.max(0, items.findIndex((e) => e.id === entry.id));
+    setViewer({ kind: 'media', items, index });
+  });
+
   const openEntry = useEvent((entry: Entry) => {
     switch (entry.kind) {
       case 'folder':
         navigate(entry.id);
         break;
-      case 'photo': {
-        const photos = entries.filter((e) => e.kind === 'photo');
-        const index = Math.max(0, photos.findIndex((e) => e.id === entry.id));
-        setViewer({ kind: 'photos', photos, index });
-        break;
-      }
+      case 'photo':
       case 'video':
-        setViewer({ kind: 'video', entry });
+        viewMedia(entry);
         break;
       case 'link':
-        setViewer({ kind: 'link', entry });
+        // ролик YouTube играет в просмотрщике, остальные ссылки - через подтверждение (UF-6)
+        if (isViewable(entry)) viewMedia(entry);
+        else setViewer({ kind: 'link', entry });
         break;
       default: {
         const url = downloadUrlOf(entry);
@@ -306,19 +322,57 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     [selectedEntries],
   );
 
+  // последнее, что ушло в корзину: Ctrl+Z и «Отменить» в тосте возвращают
+  const lastTrashed = useRef<number[] | null>(null);
+
+  const restoreMut = useMutation({
+    mutationFn: (ids: number[]) => restoreFromTrash(ids),
+    onSuccess: (r) => {
+      toast(restoreSummary(r.restored, r.renamed), 'success');
+      refreshContent();
+    },
+    onError: (e) => {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось вернуть из корзины'), 'error');
+      refreshContent();
+    },
+  });
+
+  const undone = useRef(new WeakSet<number[]>()); // «Отменить» в тосте после Ctrl+Z - уже нечего
+  const undoDelete = useEvent((ids?: number[]) => {
+    const list = ids ?? lastTrashed.current;
+    if (list === null || list.length === 0 || restoreMut.isPending || undone.current.has(list)) return;
+    undone.current.add(list);
+    const wasLast = lastTrashed.current === list;
+    if (wasLast) lastTrashed.current = null;
+    restoreMut.mutate(list, {
+      onError: () => {
+        // не вернулось - «Отменить» и Ctrl+Z можно повторить
+        undone.current.delete(list);
+        if (wasLast && lastTrashed.current === null) lastTrashed.current = list;
+      },
+    });
+  });
+
   const deleteMut = useMutation({
     mutationFn: (ids: number[]) => deleteEntries(ids),
     onSuccess: (r, ids) => {
-      toast(`Удалено: ${plural(r.removed, 'объект', 'объекта', 'объектов')}`, 'success');
+      lastTrashed.current = ids;
+      toast(`В корзину: ${plural(r.removed, 'объект', 'объекта', 'объектов')}`, 'success', {
+        label: 'Отменить',
+        onClick: () => undoDelete(ids),
+      });
       clearSelection();
-      // просмотрщик: удалённое фото/видео убрать из ленты, следующее - на место
+      // просмотрщик: удалённое убрать из ленты, следующее - на место
       setViewer((v) => {
         if (v === null) return v;
-        if (v.kind !== 'photos') return ids.includes(v.entry.id) ? null : v;
-        if (!v.photos.some((p) => ids.includes(p.id))) return v;
-        const photos = v.photos.filter((p) => !ids.includes(p.id));
-        if (photos.length === 0) return null;
-        return { ...v, photos, index: Math.min(v.index, photos.length - 1) };
+        if (v.kind !== 'media') return ids.includes(v.entry.id) ? null : v;
+        const gone = (p: Entry) => ids.includes(p.id);
+        if (!v.items.some(gone)) return v;
+        const items = v.items.filter((p) => !gone(p));
+        if (items.length === 0) return null;
+        // показываемое осталось - на нём; удалено - следующее уцелевшее после него (или последнее)
+        const after = v.items.slice(v.index).find((p) => !gone(p));
+        return { ...v, items, index: after === undefined ? items.length - 1 : items.indexOf(after) };
       });
       // UF-10: удалённая открытая папка (или её предок) возвращает на родителя;
       // в режиме поиска меняем только папку «под» поиском, результаты не сбрасываем
@@ -335,20 +389,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     },
   });
 
+  // Ф4: удаление - в корзину без вопроса (вернуть: «Отменить», Ctrl+Z, экран «Корзина»)
   const requestDelete = useEvent((ids: number[]) => {
-    if (ids.length === 0) return;
-    const doomed = entries.filter((e) => ids.includes(e.id));
-    const [single] = doomed;
-    setConfirm({
-      title:
-        doomed.length === 1 && single !== undefined
-          ? `Удалить «${displayName(single)}»?`
-          : `Удалить ${plural(ids.length, 'объект', 'объекта', 'объектов')}?`,
-      message: `${deleteWarning(doomed)}Восстановить удалённое нельзя.`,
-      confirmLabel: 'Удалить',
-      danger: true,
-      onConfirm: () => deleteMut.mutate(ids),
-    });
+    if (ids.length === 0 || deleteMut.isPending) return;
+    deleteMut.mutate(ids);
   });
 
   const commitRename = useEvent(async (id: number, name: string) => {
@@ -356,7 +400,8 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     const current = entries.find((e) => e.id === id);
     if (current === undefined || current.name === name) return;
     try {
-      await updateEntry(id, { name });
+      // новое имя - на карточке сразу; перечитывание (порядок, дерево) догонит, папка на 60k - секунды
+      patchCachedEntries(qc, [await updateEntry(id, { name })]);
       refreshContent();
     } catch (e) {
       if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось переименовать'), 'error');
@@ -448,7 +493,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   const saveProperties = useEvent(async (id: number, patch: EntryPatch) => {
     try {
-      await updateEntry(id, patch);
+      patchCachedEntries(qc, [await updateEntry(id, patch)]);
       refreshContent();
     } catch (e) {
       if (isUnauthorized(e)) return; // экран входа
@@ -492,12 +537,14 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const { only: selectOnly } = selection;
   useEffect(() => {
     if (reveal === null || showResults || listing.isPlaceholderData || listing.data === undefined) return;
-    if (listing.data.entries.some((e) => e.id === reveal)) {
+    const index = listing.data.entries.findIndex((e) => e.id === reveal);
+    if (index >= 0) {
       selectOnly(reveal);
       setPropsOpen(true);
-    }
+      galleryRef.current?.reveal(index);
+    } else if (!listing.data.complete && !listing.isFetchNextPageError) return; // ждём следующую страницу
     setReveal(null);
-  }, [reveal, showResults, listing.isPlaceholderData, listing.data, selectOnly]);
+  }, [reveal, showResults, listing.isPlaceholderData, listing.data, listing.isFetchNextPageError, selectOnly]);
 
   // теги/описание изменились - обновляем и снимки в открытом просмотрщике,
   // чтобы панель слева показывала свежие теги (сами карточки обновляет запрос)
@@ -505,15 +552,15 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     const byId = new Map(entries.map((e) => [e.id, e]));
     setViewer((v) => {
       if (v === null) return v;
-      if (v.kind !== 'photos') {
+      if (v.kind !== 'media') {
         const fresh = byId.get(v.entry.id);
         return fresh !== undefined && fresh !== v.entry ? { ...v, entry: fresh } : v;
       }
-      const photos = v.photos.map((p) => byId.get(p.id) ?? p);
-      if (photos.every((p, i) => p === v.photos[i])) return v;
-      const current = v.photos[v.index]?.id;
-      const index = Math.max(0, photos.findIndex((p) => p.id === current));
-      return { ...v, photos, index };
+      const items = v.items.map((p) => byId.get(p.id) ?? p);
+      if (items.every((p, i) => p === v.items[i])) return v;
+      const current = v.items[v.index]?.id;
+      const index = Math.max(0, items.findIndex((p) => p.id === current));
+      return { ...v, items, index };
     });
   }, [entries]);
 
@@ -536,6 +583,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const changeFilter = useEvent((next: TagFilter) => {
     setFilter(next);
     setTagsOpen(false);
+    setTrashOpen(false);
     setRenamingId(null);
   });
 
@@ -546,6 +594,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     setSearchText('');
     setCommittedQuery('');
     setTagsOpen(false);
+    setTrashOpen(false);
     setRenamingId(null);
     setFilterOpen(true);
   });
@@ -555,6 +604,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     setFilter(next);
     setSearchText('');
     setCommittedQuery('');
+    setTrashOpen(false);
     setRenamingId(null);
     setFilterOpen(true);
   });
@@ -622,10 +672,16 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   // ── Карточки ──────────────────────────────────────────────────────────────
 
+  // модель B (Ф4): клик выделяет, двойной клик / Enter открывает, пробел - быстрый просмотр
   const onCardClick = useEvent((e: MouseEvent, entry: Entry) => {
     if (e.ctrlKey || e.metaKey) selection.toggle(entry.id);
     else if (e.shiftKey) selection.extendTo(entry.id);
-    else openEntry(entry);
+    else selection.only(entry.id);
+  });
+
+  const onCardDoubleClick = useEvent((e: MouseEvent, entry: Entry) => {
+    if (e.ctrlKey || e.metaKey || e.shiftKey || isInteractiveTarget(e.target)) return;
+    openEntry(entry);
   });
 
   const onCardContextMenu = useEvent((e: MouseEvent, entry: Entry) => {
@@ -638,6 +694,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const cardHandlers = useMemo<EntryCardHandlers>(
     () => ({
       onClick: onCardClick,
+      onDoubleClick: onCardDoubleClick,
       onToggleSelect: toggleSelect,
       onContextMenu: onCardContextMenu,
       onRenameStart: setRenamingId,
@@ -652,13 +709,25 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       onOpenTags: openCardTags, // «+N» тегов - свойства с фокусом в поле тегов
       ...dnd.card,
     }),
-    [onCardClick, toggleSelect, onCardContextMenu, commitRename, dnd.card, links.addFromText, filterByTag, openCardTags],
+    [onCardClick, onCardDoubleClick, toggleSelect, onCardContextMenu, commitRename, dnd.card, links.addFromText, filterByTag, openCardTags],
   );
 
   // ── Клавиатура ────────────────────────────────────────────────────────────
 
+  // Ctrl+Z - вернуть последнее удалённое; работает и из просмотрщика
+  useWindowEvent('keydown', (e) => {
+    if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
+    if (e.key.toLowerCase() !== 'z' && e.code !== 'KeyZ') return;
+    if (e.defaultPrevented || isTypingTarget(e.target) || confirm !== null || menu !== null) return;
+    if (tagsOpen || (anyModalOpen() && viewer?.kind !== 'media')) return; // в диалогах Ctrl+Z не наш
+    if (lastTrashed.current === null) return;
+    e.preventDefault();
+    undoDelete();
+  });
+
   useWindowEvent('keydown', (e) => {
     if (e.defaultPrevented || isTypingTarget(e.target) || anyModalOpen() || menu !== null || tagsOpen) return;
+    if (trashOpen) return; // у корзины свои клавиши
     const { selected } = selection;
     const [first] = selected;
     const ctrl = e.ctrlKey || e.metaKey;
@@ -675,8 +744,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       if (target !== null) {
         e.preventDefault();
         setRenamingId(target);
+        galleryRef.current?.reveal(visibleIds.indexOf(target)); // выделенная могла быть прокручена далеко
       }
     } else if (e.key === 'Delete') {
+      if (e.repeat) return; // зажатый Delete - одна пачка, не по карточке на повтор
       if (selected.size > 0) {
         e.preventDefault();
         requestDelete([...selected]);
@@ -686,23 +757,37 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       e.preventDefault();
       openProperties(selected.size === 0 ? hoveredId.current : null);
     } else if (e.key === 'Enter') {
-      if (isInteractiveTarget(e.target) || selected.size !== 1) return;
+      if (e.repeat || isInteractiveTarget(e.target) || selected.size !== 1) return;
       const entry = entries.find((en) => en.id === first);
       if (entry !== undefined) openEntry(entry);
+    } else if (e.key === ' ' && !ctrl) {
+      // пробел - быстрый просмотр выделенного фото, видео или ролика (пробел в просмотре закрывает)
+      if (e.repeat || isInteractiveTarget(e.target) || selected.size !== 1) return;
+      const entry = entries.find((en) => en.id === first);
+      if (entry === undefined || !isViewable(entry)) return;
+      e.preventDefault();
+      viewMedia(entry);
     } else if (ctrl && (e.key.toLowerCase() === 'a' || e.code === 'KeyA')) {
       // e.code - физическая клавиша: Ctrl+A работает и на русской раскладке (e.key = «ф»)
       e.preventDefault();
+      if (!complete) {
+        // загружена только часть: «выделить всё» + Delete задели бы не всё, что в папке
+        const n = (v: number) => v.toLocaleString('ru-RU');
+        toast(`Ещё загружается: ${n(entries.length)} из ${n(total)} - выделить всё можно после загрузки`, 'info');
+        return;
+      }
       selection.selectAll();
     } else if (!ctrl && isNavKey(e.key)) {
       e.preventDefault();
-      selection.move(e.key);
+      const id = selection.move(e.key, galleryRef.current?.columns() ?? 1, e.shiftKey);
+      if (id !== undefined) galleryRef.current?.reveal(visibleIds.indexOf(id));
     }
   });
 
   // ── Вставка из буфера (Ctrl+V): файлы/картинки и ссылки ──────────────────
 
   useWindowEvent('paste', (e) => {
-    if (isTypingTarget(e.target) || anyModalOpen() || tagsOpen) return; // в полях вставка обычная
+    if (isTypingTarget(e.target) || anyModalOpen() || tagsOpen || trashOpen) return; // в полях вставка обычная
     const cd = e.clipboardData;
     if (cd === null) return;
     if (cd.files.length > 0) {
@@ -722,6 +807,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   // Окно берёт файлы из проводника и ссылки/текст из браузера; перенос карточек
   // обрабатывают их приёмники. Текст, брошенный в поле ввода, окну не нужен.
   const droppedKind = (e: DragEvent): 'files' | 'link' | null => {
+    if (trashOpen) return null; // в корзину ничего не бросают: папки назначения не видно
     const kind = dragKind(e.dataTransfer.types);
     if (kind === 'files') return kind;
     return kind === 'link' && !isTypingTarget(e.target) && !anyModalOpen() ? kind : null;
@@ -786,7 +872,8 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     );
   }
 
-  const contentError = (showResults ? search.error : listing.error) ?? null;
+  // не догрузилась страница - загруженное остаётся на экране, причина в строке состояния
+  const contentError = content.isFetchNextPageError ? null : (content.error ?? null);
   const loading = showResults ? search.isPending : listing.isPending;
 
   return (
@@ -798,7 +885,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         searchText={searchText}
         onSearchText={(text) => {
           setSearchText(text);
-          if (text !== '') setTagsOpen(false);
+          if (text !== '') {
+            setTagsOpen(false);
+            setTrashOpen(false);
+          }
         }}
         filter={filter}
         filterSummary={isFilter ? filterSummary(filter, catalog, folderId) : null}
@@ -824,11 +914,30 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             Папки
           </p>
           <FolderTree
-            current={showResults ? undefined : folderId}
+            current={showResults || trashOpen ? undefined : folderId}
             expandPath={expandPath}
             onNavigate={navigate}
             dnd={dnd.tree}
           />
+          <div className="px-2 pt-1">
+            <button
+              type="button"
+              aria-current={trashOpen ? 'page' : undefined}
+              className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition ${
+                trashOpen ? 'bg-accent/20 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+              }`}
+              onClick={() => {
+                setTrashOpen(true);
+                setTagsOpen(false);
+                setRenamingId(null);
+                clearSelection();
+              }}
+            >
+              <span aria-hidden="true">🗑</span>
+              <span className="flex-1">Корзина</span>
+              {trashCount > 0 && <span className="text-xs tabular-nums text-zinc-500">{trashCount}</span>}
+            </button>
+          </div>
           <TagSidebar
             filter={filter}
             onToggleTag={toggleFilterTag}
@@ -849,41 +958,48 @@ function Shell({ onLocked }: { onLocked: () => void }) {
           />
         )}
 
-        <main
-          ref={mainRef}
-          className={`flex-1 overflow-y-auto p-4 pb-20 ${rubber.box !== null ? 'select-none' : ''}`}
-          onPointerDown={rubber.onPointerDown}
-          onClick={(e) => {
-            if (rubber.justCommitted.current) {
-              rubber.justCommitted.current = false; // это отпустили рамку, а не кликнули по фону
-              return;
-            }
-            const t = e.target as HTMLElement;
-            if (t === e.currentTarget || t.dataset.gallery !== undefined) clearSelection();
-          }}
-        >
-          {contentError !== null ? (
-            <div className="flex h-64 flex-col items-center justify-center gap-3">
-              <p className="text-sm text-zinc-300">{contentError.message}</p>
-              <button
-                type="button"
-                className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:bg-accent-hover"
-                onClick={() => navigate(null)}
-              >
-                К корню
-              </button>
-            </div>
-          ) : (
-            <Gallery
-              items={items}
-              loading={loading}
-              isSearch={showResults}
-              selection={selection.selected}
-              renamingId={renamingId}
-              handlers={cardHandlers}
-            />
-          )}
-        </main>
+        {trashOpen ? (
+          <TrashView onChanged={() => (lastTrashed.current = null)} />
+        ) : (
+          <main
+            ref={mainRef}
+            className={`flex-1 overflow-y-auto p-4 pb-20 ${rubber.box !== null ? 'select-none' : ''}`}
+            onPointerDown={rubber.onPointerDown}
+            onClick={(e) => {
+              if (rubber.justCommitted.current) {
+                rubber.justCommitted.current = false; // это отпустили рамку, а не кликнули по фону
+                return;
+              }
+              const t = e.target as HTMLElement;
+              if (t === e.currentTarget || t.dataset.gallery !== undefined) clearSelection();
+            }}
+          >
+            {contentError !== null ? (
+              <div className="flex h-64 flex-col items-center justify-center gap-3">
+                <p className="text-sm text-zinc-300">{contentError.message}</p>
+                <button
+                  type="button"
+                  className="rounded-lg bg-accent px-4 py-1.5 text-sm text-white hover:bg-accent-hover"
+                  onClick={() => navigate(null)}
+                >
+                  К корню
+                </button>
+              </div>
+            ) : (
+              <Gallery
+                items={items}
+                total={total}
+                scrollRef={mainRef}
+                handleRef={galleryRef}
+                loading={loading}
+                isSearch={showResults}
+                selection={selection.selected}
+                renamingId={renamingId}
+                handlers={cardHandlers}
+              />
+            )}
+          </main>
+        )}
 
         {filterOpen && (
           <FilterPanel
@@ -898,7 +1014,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       <StatusBar
         safe={safe}
         isSearch={showResults}
-        found={entries.length}
+        found={total}
+        loaded={complete ? undefined : entries.length}
+        pageError={content.isFetchNextPageError}
         watch={{ status: watch.status, folderName: watch.folderName }}
         onWatchResume={() => void watch.resume()}
         onWatchDisable={() => void watch.disable()}
@@ -947,9 +1065,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         />
       )}
 
-      {viewer?.kind === 'photos' && (
-        <Lightbox
-          photos={viewer.photos}
+      {viewer?.kind === 'media' && (
+        <MediaViewer
+          items={viewer.items}
           index={viewer.index}
           onIndex={(index) => setViewer({ ...viewer, index })}
           onClose={() => setViewer(null)}
@@ -964,25 +1082,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             filterByTag(tagId);
           }}
           onSavePatch={saveProperties}
-          onDeleteRequest={(en) => requestDelete([en.id])}
-        />
-      )}
-      {viewer?.kind === 'video' && (
-        <VideoModal
-          entry={viewer.entry}
-          onClose={() => setViewer(null)}
-          onActivity={markActivity}
-          sourceNames={sourceNames}
-          onOpenSource={(id) => {
-            setViewer(null);
-            void openSource(id);
-          }}
-          onFilterTag={(tagId) => {
-            setViewer(null);
-            filterByTag(tagId);
-          }}
-          onSavePatch={saveProperties}
-          onDeleteRequest={(en) => requestDelete([en.id])}
+          onDelete={(en) => requestDelete([en.id])}
         />
       )}
       {viewer?.kind === 'link' && <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />}

@@ -428,55 +428,57 @@ describe('предпросмотр ссылок (UF-21)', () => {
   const pendingLink = (pending: boolean) => ({ ...link, previewPending: pending });
   const listingOf = (entries: Entry[]) => ({ json: { parent: null, path: [], entries } });
 
-  it('пока previewPending - листинг опрашивается раз в 2 с, потом опрос прекращается', async () => {
+  it('пока previewPending - раз в 2 с перечитывается только эта запись, папка - нет', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     let reads = 0;
-    server.routes['GET /api/v1/entries'] = () => {
+    server.routes['GET /api/v1/entries'] = () => listingOf([photo, pendingLink(true)]);
+    server.routes['GET /api/v1/entries/2'] = () => {
       reads += 1;
-      return listingOf([photo, pendingLink(reads < 3)]);
+      return { json: pendingLink(reads < 2) };
     };
     await renderShell();
     const pending = () => screen.queryByRole('img', { name: 'Загружается предпросмотр' });
     expect(pending()).not.toBeNull();
-    expect(entryGets()).toHaveLength(1);
 
     await vi.advanceTimersByTimeAsync(2100);
-    expect(entryGets()).toHaveLength(2);
+    expect(server.callsTo('GET', '/api/v1/entries/2')).toHaveLength(1);
     expect(pending()).not.toBeNull();
 
     await vi.advanceTimersByTimeAsync(2100);
     await waitFor(() => expect(pending()).toBeNull());
-    expect(entryGets()).toHaveLength(3);
+    expect(server.callsTo('GET', '/api/v1/entries/2')).toHaveLength(2);
 
     await vi.advanceTimersByTimeAsync(10_000);
-    expect(entryGets()).toHaveLength(3);
+    expect(server.callsTo('GET', '/api/v1/entries/2')).toHaveLength(2);
+    expect(entryGets()).toHaveLength(1); // папка прочитана один раз
   });
 
-  it('без ссылок в очереди листинг не опрашивается вовсе', async () => {
+  it('без ссылок в очереди ничего не опрашивается', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
     server.routes['GET /api/v1/entries'] = () => listingOf([photo, pendingLink(false)]);
     await renderShell();
     await vi.advanceTimersByTimeAsync(9000);
     expect(entryGets()).toHaveLength(1);
+    expect(server.callsTo('GET', '/api/v1/entries/2')).toHaveLength(0);
     expect(screen.queryByRole('img', { name: 'Загружается предпросмотр' })).toBeNull();
   });
 
-  it('в результатах поиска тоже опрашивается, пока есть ожидающие', async () => {
+  it('в результатах поиска тоже: запись обновляется точечно, поиск не повторяется', async () => {
     vi.useFakeTimers({ shouldAdvanceTime: true });
-    let reads = 0;
-    server.routes['GET /api/v1/search'] = (c) => {
-      reads += 1;
-      return { json: { query: c.query.get('q'), results: [{ entry: pendingLink(reads < 2), path: [], matchedIn: 'name' }] } };
-    };
+    server.routes['GET /api/v1/search'] = (c) => ({
+      json: { query: c.query.get('q'), results: [{ entry: pendingLink(true), path: [], matchedIn: 'name' }] },
+    });
+    server.routes['GET /api/v1/entries/2'] = () => ({ json: pendingLink(false) });
     await renderShell();
     fireEvent.change(screen.getByLabelText('Поиск по именам во всём сейфе'), { target: { value: 'при' } });
     await vi.advanceTimersByTimeAsync(400);
     await waitFor(() => expect(screen.queryByRole('img', { name: 'Загружается предпросмотр' })).not.toBeNull());
+    const searches = server.callsTo('GET', '/api/v1/search').length;
     await vi.advanceTimersByTimeAsync(2100);
     await waitFor(() => expect(screen.queryByRole('img', { name: 'Загружается предпросмотр' })).toBeNull());
-    const searches = server.callsTo('GET', '/api/v1/search').length;
     await vi.advanceTimersByTimeAsync(10_000);
     expect(server.callsTo('GET', '/api/v1/search')).toHaveLength(searches);
+    expect(server.callsTo('GET', '/api/v1/entries/2')).toHaveLength(1);
   });
 
   it('«Обновить предпросмотр»: карточка перечитана, адрес миниатюры получает новую версию', async () => {
@@ -520,7 +522,7 @@ describe('внешние ссылки (UF-19, UF-6)', () => {
   it('«Открыть» после подтверждения: window.open в новую вкладку с noopener', async () => {
     const open = vi.spyOn(window, 'open').mockReturnValue(null);
     await renderShell();
-    fireEvent.click(cardOf('Пример'));
+    fireEvent.doubleClick(cardOf('Пример'));
     const dialog = await screen.findByRole('dialog', { name: 'Открыть внешнюю ссылку' });
     expect(open).not.toHaveBeenCalled(); // без подтверждения страница не открывается
     fireEvent.click(within(dialog).getByRole('button', { name: 'Открыть' }));

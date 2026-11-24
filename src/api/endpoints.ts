@@ -24,8 +24,10 @@ import type {
   MovePlanResponse,
   MoveResult,
   NewLink,
+  PurgedResponse,
   RemovedResponse,
   RemovedTagsResponse,
+  RestoreResponse,
   SafeStatus,
   SearchResponse,
   Session,
@@ -34,6 +36,7 @@ import type {
   TagMatch,
   TagRef,
   TagsResponse,
+  TrashListing,
   UpdatedResponse,
 } from './types';
 
@@ -73,9 +76,24 @@ function withParent(path: string, parentId: number | null): string {
   return parentId === null ? path : `${path}?parentId=${parentId}`;
 }
 
+/** Окно выдачи (К2): offset/limit; без них - всё. */
+export interface PageOptions {
+  offset?: number;
+  limit?: number;
+}
+
+function setPage(params: URLSearchParams, page: PageOptions): void {
+  if (page.offset !== undefined && page.offset > 0) params.set('offset', String(page.offset));
+  if (page.limit !== undefined) params.set('limit', String(page.limit));
+}
+
 /** parentId — любая запись: у папки это содержимое, у остальных — вложения (UF-14). */
-export function listEntries(parentId: number | null): Promise<Listing> {
-  return api.get<Listing>(withParent('/api/v1/entries', parentId));
+export function listEntries(parentId: number | null, page: PageOptions = {}): Promise<Listing> {
+  const params = new URLSearchParams();
+  if (parentId !== null) params.set('parentId', String(parentId));
+  setPage(params, page);
+  const qs = params.toString();
+  return api.get<Listing>(qs === '' ? '/api/v1/entries' : `/api/v1/entries?${qs}`);
 }
 
 /** Одна запись со всеми полями: имя источника унаследованного тега и переход к нему (UF-16). */
@@ -119,13 +137,30 @@ export function assignTags(
   return api.post<UpdatedResponse>('/api/v1/entries/tags', { ids, ...change });
 }
 
-/** Одна запись — DELETE /entries/:id, несколько — одной транзакцией. */
+/** В корзину: одна запись — DELETE /entries/:id, несколько — одной транзакцией. */
 export function deleteEntries(ids: number[]): Promise<RemovedResponse> {
   const [only] = ids;
   if (ids.length === 1 && only !== undefined) {
     return api.delete<RemovedResponse>(`/api/v1/entries/${only}`);
   }
   return api.post<RemovedResponse>('/api/v1/entries/delete', { ids });
+}
+
+// ── Корзина ─────────────────────────────────────────────────────────────────
+
+/** Корни корзины, недавно удалённые первыми; limit - окно (total - сколько всего). */
+export function listTrash(limit = 1000): Promise<TrashListing> {
+  return api.get<TrashListing>(`/api/v1/trash?limit=${limit}`);
+}
+
+/** Вернуть на прежнее место; занятое имя получает приписку (renamed). */
+export function restoreFromTrash(ids: number[]): Promise<RestoreResponse> {
+  return api.post<RestoreResponse>('/api/v1/trash/restore', { ids });
+}
+
+/** Стереть навсегда: выбранные или всю корзину. */
+export function purgeTrash(what: { ids: number[] } | { all: true }): Promise<PurgedResponse> {
+  return api.post<PurgedResponse>('/api/v1/trash/purge', what);
 }
 
 // ── Поиск ───────────────────────────────────────────────────────────────────
@@ -135,6 +170,7 @@ export interface SearchOptions {
   match?: TagMatch;
   within?: number; // только потомки этой записи
   limit?: number;
+  offset?: number;
 }
 
 /** q и tags одновременно пустые — сервер вернёт пустой список. */
@@ -143,7 +179,7 @@ export function searchPath(q: string, opts: SearchOptions = {}): string {
   if (opts.tags !== undefined && opts.tags.length > 0) params.set('tags', opts.tags.join(','));
   if (opts.match !== undefined) params.set('match', opts.match);
   if (opts.within !== undefined) params.set('within', String(opts.within));
-  if (opts.limit !== undefined) params.set('limit', String(opts.limit));
+  setPage(params, opts);
   return `/api/v1/search?${params.toString()}`;
 }
 

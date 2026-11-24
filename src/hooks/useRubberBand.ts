@@ -1,14 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import type { PointerEvent as ReactPointerEvent } from 'react';
-import { boxFromPoints, boxesIntersect } from '../lib/rubberBand';
+import { boxFromPoints } from '../lib/rubberBand';
 import type { Box } from '../lib/rubberBand';
 import { useWindowEvent } from './useEvent';
-
-/** Карточка для рамки: id записи и её элемент (для getBoundingClientRect). */
-export interface RubberCard {
-  id: number;
-  el: HTMLElement;
-}
 
 const THRESHOLD_PX = 5; // меньше - это клик, а не протяжка
 const EDGE_PX = 36; // зона у кромки, где включается автоскролл
@@ -29,15 +23,18 @@ const TICK_MS = 16; // ~кадр; курсор может стоять у кра
  */
 export function useRubberBand({
   isBackground,
-  getCards,
+  getHits,
   getBase,
   onSelect,
   getViewport,
 }: {
   /** pointerdown пришёл на фон галереи, а не на карточку */
   isBackground: (e: ReactPointerEvent) => boolean;
-  /** видимые карточки с элементами; зовётся на каждом пересчёте рамки */
-  getCards: () => RubberCard[];
+  /**
+   * id карточек под рамкой (клиентские координаты); зовётся на каждом пересчёте.
+   * Виртуальная сетка считает по геометрии - и те карточки, что ушли за экран.
+   */
+  getHits: (band: Box) => number[];
   /** выделение на момент старта протяжки (база для Ctrl-варианта) */
   getBase: () => ReadonlySet<number>;
   /** применить выделение (и по ходу протяжки, и по её концу) */
@@ -67,9 +64,7 @@ export function useRubberBand({
     const scrollTop = getViewport?.()?.scrollTop ?? 0;
     const band = boxFromPoints(s.x, s.yContent - scrollTop, cx, cy);
     setBox(band);
-    const hits = getCards()
-      .filter((c) => boxesIntersect(c.el.getBoundingClientRect(), band))
-      .map((c) => c.id);
+    const hits = getHits(band);
     onSelect(s.additive ? [...new Set([...s.base, ...hits])] : hits);
   };
 

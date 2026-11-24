@@ -37,8 +37,20 @@ function tooltipOf(entry: Entry, name: string): string {
   return description === '' ? name : `${name}\n${description}`;
 }
 
+/**
+ * Какие необязательные строки карточки резервировать (К2): в виртуальной сетке
+ * все карточки одной высоты, поэтому строка описания и строка тегов есть у всех,
+ * если они нужны хоть одной карточке выдачи. Не задано - строки по содержимому.
+ */
+export interface CardLines {
+  detail: boolean;
+  tags: boolean;
+}
+
 export interface EntryCardHandlers {
   onClick: (e: MouseEvent, entry: Entry) => void;
+  /** двойной клик - открыть (модель B: одиночный только выделяет) */
+  onDoubleClick?: (e: MouseEvent, entry: Entry) => void;
   onToggleSelect: (id: number) => void;
   onContextMenu: (e: MouseEvent, entry: Entry) => void;
   onRenameStart: (id: number) => void;
@@ -76,6 +88,7 @@ export const EntryCard = memo(function EntryCard({
   selected,
   renaming,
   fresh = false,
+  lines,
   handlers,
 }: {
   entry: Entry;
@@ -86,6 +99,7 @@ export const EntryCard = memo(function EntryCard({
   selected: boolean;
   renaming: boolean;
   fresh?: boolean; // только что добавлена: подсвечивается на пару секунд (UF-20)
+  lines?: CardLines;
   handlers: EntryCardHandlers;
 }) {
   const [thumbFailed, setThumbFailed] = useState(false);
@@ -104,10 +118,15 @@ export const EntryCard = memo(function EntryCard({
   useEffect(() => setThumbFailed(false), [thumbSrc]);
 
   const description = entry.kind === 'link' ? firstLine(entry.description) : '';
+  // сниппет (результаты поиска) и описание ссылки не встречаются вместе: одна строка на обоих
+  const detail = snippet !== undefined && snippet !== '' ? snippet : description;
+  const showDetail = lines?.detail ?? detail !== '';
+  const showTags = lines?.tags ?? chips.length > 0;
 
   return (
     <div
       data-entry-id={entry.id}
+      data-renaming={renaming ? '' : undefined}
       className={`group relative flex cursor-pointer select-none flex-col rounded-xl border bg-zinc-900/60 transition ${
         drop.over
           ? 'border-accent bg-accent/10 ring-2 ring-accent'
@@ -123,6 +142,7 @@ export const EntryCard = memo(function EntryCard({
       onDragEnd={handlers.onDragEnd}
       {...drop.props}
       onClick={(e) => handlers.onClick(e, entry)}
+      onDoubleClick={(e) => handlers.onDoubleClick?.(e, entry)}
       onContextMenu={(e) => handlers.onContextMenu(e, entry)}
       onMouseEnter={() => handlers.onHover(entry.id)}
       onMouseLeave={() => handlers.onHover(null)}
@@ -192,7 +212,7 @@ export const EntryCard = memo(function EntryCard({
             onCancel={handlers.onRenameCancel}
           />
         ) : (
-          <div className="flex items-center gap-1">
+          <div className="flex h-5 items-center gap-1">
             <span className="truncate text-sm text-zinc-200">{name}</span>
             <button
               type="button"
@@ -208,7 +228,7 @@ export const EntryCard = memo(function EntryCard({
             </button>
           </div>
         )}
-        <div className="flex items-center gap-1.5 text-xs text-zinc-500" title={caption}>
+        <div className="flex h-4 items-center gap-1.5 text-xs text-zinc-500" title={caption}>
           {entry.previewPending === true && (
             <span
               role="img"
@@ -219,14 +239,12 @@ export const EntryCard = memo(function EntryCard({
           )}
           <span className="min-w-0 truncate">{caption ?? captionOf(entry)}</span>
         </div>
-        {snippet !== undefined && snippet !== '' && (
-          <div className="mt-0.5 truncate text-xs text-zinc-400">{snippet}</div>
-        )}
-        {description !== '' && <div className="truncate text-xs text-zinc-400">{description}</div>}
-        {chips.length > 0 && (
-          <div className="mt-1.5 flex flex-wrap gap-1" aria-label="Теги">
+        {showDetail && <div className="mt-0.5 h-4 truncate text-xs leading-4 text-zinc-400">{detail}</div>}
+        {showTags && (
+          // одна строка: лишние чипы обрезаются, всё - в «+N» и в свойствах
+          <div className="mt-1.5 flex h-4 flex-nowrap gap-1 overflow-hidden" aria-label="Теги">
             {chips.map((chip) => {
-              const cls = `max-w-full truncate rounded-full border px-1.5 text-[10px] leading-4 ${
+              const cls = `min-w-0 max-w-full shrink truncate rounded-full border px-1.5 text-[10px] leading-4 ${
                 chip.inherited
                   ? 'border-zinc-800 text-zinc-600'
                   : 'border-zinc-700 bg-zinc-800/80 text-zinc-300'
@@ -262,7 +280,7 @@ export const EntryCard = memo(function EntryCard({
               (handlers.onOpenTags === undefined ? (
                 <span
                   title={`Ещё тегов: ${more}`}
-                  className="rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500"
+                  className="shrink-0 rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500"
                 >
                   +{more}
                 </span>
@@ -271,7 +289,7 @@ export const EntryCard = memo(function EntryCard({
                   type="button"
                   title={`Ещё тегов: ${more} — показать все теги записи`}
                   aria-label={`Все теги записи (${more} скрыто)`}
-                  className="cursor-pointer rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500 transition hover:border-accent hover:text-zinc-100"
+                  className="shrink-0 cursor-pointer rounded-full border border-zinc-800 px-1.5 text-[10px] leading-4 text-zinc-500 transition hover:border-accent hover:text-zinc-100"
                   onClick={(e) => {
                     e.stopPropagation();
                     handlers.onOpenTags?.(entry);

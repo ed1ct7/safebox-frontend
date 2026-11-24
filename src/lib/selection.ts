@@ -33,18 +33,41 @@ export function rangeBetween(ids: readonly number[], anchor: number | null, targ
   return ids.slice(lo, hi + 1);
 }
 
-export type NavKey = 'ArrowLeft' | 'ArrowRight' | 'Home' | 'End';
+export type NavKey = 'ArrowLeft' | 'ArrowRight' | 'ArrowUp' | 'ArrowDown' | 'Home' | 'End';
 
 export function isNavKey(key: string): key is NavKey {
-  return key === 'ArrowLeft' || key === 'ArrowRight' || key === 'Home' || key === 'End';
+  return (
+    key === 'ArrowLeft' ||
+    key === 'ArrowRight' ||
+    key === 'ArrowUp' ||
+    key === 'ArrowDown' ||
+    key === 'Home' ||
+    key === 'End'
+  );
 }
 
-/** Индекс карточки после стрелки/Home/End; current = -1 — ничего не выбрано. */
-export function stepIndex(length: number, current: number, key: NavKey): number {
+/**
+ * Индекс карточки после стрелки/Home/End в сетке из columns колонок;
+ * current = -1 — ничего не выбрано. ↓ из предпоследнего ряда, под которой
+ * карточки нет, ведёт на последнюю (как в проводнике); ↑ из первого ряда и ↓ из
+ * последнего остаются на месте.
+ */
+export function stepIndex(length: number, current: number, key: NavKey, columns = 1): number {
   if (length === 0) return -1;
   const last = length - 1;
+  const cols = Math.max(1, Math.floor(columns));
   if (key === 'Home') return 0;
   if (key === 'End') return last;
-  if (current < 0) return key === 'ArrowRight' ? 0 : last;
-  return key === 'ArrowRight' ? Math.min(current + 1, last) : Math.max(current - 1, 0);
+  if (current < 0 || current > last) return key === 'ArrowRight' || key === 'ArrowDown' ? 0 : last;
+  switch (key) {
+    case 'ArrowRight':
+      return Math.min(current + 1, last);
+    case 'ArrowLeft':
+      return Math.max(current - 1, 0);
+    case 'ArrowUp':
+      return current - cols >= 0 ? current - cols : current;
+    case 'ArrowDown':
+      if (current + cols <= last) return current + cols;
+      return Math.floor(current / cols) < Math.floor(last / cols) ? last : current;
+  }
 }

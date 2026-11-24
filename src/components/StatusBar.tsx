@@ -7,6 +7,8 @@ export function StatusBar({
   safe,
   isSearch,
   found,
+  loaded,
+  pageError = false,
   watch,
   onWatchResume,
   onWatchDisable,
@@ -14,6 +16,10 @@ export function StatusBar({
   safe: SafeInfo | undefined;
   isSearch: boolean;
   found: number;
+  /** выдача догружается страницами (К2): загружено столько из found */
+  loaded?: number;
+  /** страница не загрузилась - догрузка остановлена */
+  pageError?: boolean;
   watch: { status: WatchStatus; folderName: string };
   onWatchResume: () => void;
   onWatchDisable: () => void;
@@ -26,6 +32,12 @@ export function StatusBar({
           {isSearch && (
             <span className="shrink-0">
               · найдено: {plural(found, 'результат', 'результата', 'результатов')}
+            </span>
+          )}
+          {loaded !== undefined && loaded < found && (
+            <span className={`shrink-0 ${pageError ? 'text-red-400' : ''}`} role="status">
+              · {pageError ? 'загрузка прервана' : 'загружается'}: {loaded.toLocaleString('ru-RU')} из{' '}
+              {found.toLocaleString('ru-RU')}
             </span>
           )}
           <span className="truncate" title={safe.path}>

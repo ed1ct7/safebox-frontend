@@ -33,6 +33,7 @@ export interface Entry {
   inheritedTags: InheritedTagRef[]; // от предков с inherit
   sourceModifiedAt: number | null; // unix-мс изменения исходного файла на диске
   previewPending?: boolean; // только у link: предпросмотр в очереди
+  trashedAt?: number; // unix-мс; только у корня поддерева в корзине
 }
 
 export interface PathItem {
@@ -44,6 +45,8 @@ export interface Listing {
   parent: Entry | null; // открытая папка или запись с вложениями; null — корень
   path: PathItem[]; // крошки от корня до parent включительно
   entries: Entry[]; // папки первыми, дальше по имени без учёта регистра
+  /** детей всего, без учёта окна offset/limit (сервер Ф2.3+) */
+  total?: number;
 }
 
 export interface FolderNode {
@@ -125,7 +128,27 @@ export interface HeartbeatResponse {
 }
 
 export interface RemovedResponse {
-  removed: number;
+  removed: number; // ушло в корзину (корней)
+}
+
+/** Корень корзины: запись + откуда удалена (крошки до родителя; [] - корень). */
+export interface TrashEntry extends Entry {
+  trashedAt: number;
+  location: PathItem[];
+}
+
+export interface TrashListing {
+  entries: TrashEntry[]; // недавно удалённые первыми
+  total: number; // корней в корзине
+}
+
+export interface RestoreResponse {
+  restored: number;
+  renamed: { id: number; name: string }[]; // имя на месте было занято -> «имя (2)»
+}
+
+export interface PurgedResponse {
+  purged: number;
 }
 
 export interface FoldersResponse {
@@ -135,6 +158,8 @@ export interface FoldersResponse {
 export interface SearchResponse {
   query: string;
   results: SearchHit[];
+  /** найдено всего, без учёта окна offset/limit */
+  total?: number;
 }
 
 export interface TagsResponse {

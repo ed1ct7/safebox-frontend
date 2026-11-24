@@ -134,7 +134,7 @@ describe('теги на карточках и в панели свойств', (
 
   it('унаследованный тег: «от: <папка>» из крошек, клик ведёт к папке-источнику', async () => {
     const user = await renderShell();
-    fireEvent.click(cardOf('Папка')); // открыть папку
+    fireEvent.doubleClick(cardOf('Папка')); // открыть папку
     await screen.findByText('внутри.txt');
     await user.click(within(cardOf('внутри.txt')).getByRole('checkbox'));
     await user.keyboard('{Alt>}{Enter}{/Alt}');
@@ -215,7 +215,7 @@ describe('фильтр по тегам (UF-18)', () => {
 
   it('«В этой папке»: within = id открытой папки', async () => {
     const user = await renderShell();
-    fireEvent.click(cardOf('Папка'));
+    fireEvent.doubleClick(cardOf('Папка'));
     await screen.findByText('внутри.txt');
     const dialog = await pickFilterTags(user, 'eris');
     await waitFor(() => expect(searchCalls().length).toBeGreaterThan(0));
@@ -273,7 +273,7 @@ describe('фильтр по тегам (UF-18)', () => {
     const user = await renderShell();
     await pickFilterTags(user, 'eris');
     await screen.findByText(/Фильтр: /);
-    fireEvent.click(cardOf('Папка'));
+    fireEvent.doubleClick(cardOf('Папка'));
     expect(await screen.findByText('внутри.txt')).toBeInTheDocument();
     expect(screen.queryByText(/Фильтр: /)).toBeNull();
   });
@@ -420,7 +420,7 @@ describe('теги в просмотрщике (фото на весь экра�
       json: { ...rootListing, entries: [folder, photo, dog, link] },
     });
     const user = await renderShell();
-    fireEvent.click(cardOf('кот.jpg'));
+    fireEvent.doubleClick(cardOf('кот.jpg'));
     await screen.findByRole('dialog', { name: 'Просмотр фото' });
     return user;
   }
@@ -465,7 +465,7 @@ describe('теги в просмотрщике (фото на весь экра�
 
   it('стрелки листают фото - панель показывает теги следующего', async () => {
     const user = await openViewer();
-    await user.click(screen.getByRole('button', { name: 'Следующее фото (→)' }));
+    await user.click(screen.getByRole('button', { name: 'Следующее (→)' }));
     const panel = screen.getByRole('complementary', { name: 'Теги записи' });
     expect(await within(panel).findByRole('button', { name: 'Снять тег «language: ru»' })).toBeInTheDocument();
     expect(within(panel).queryByRole('button', { name: 'Снять тег «character: eris greyrat»' })).toBeNull();
