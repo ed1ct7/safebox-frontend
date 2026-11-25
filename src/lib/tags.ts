@@ -143,11 +143,14 @@ export function searchCatalogGroups(catalog: TagCatalog, query: string): Catalog
  * Компактный вид категории: по убыванию числа записей, пустые - в конце по имени.
  * Выбор тега порядок не меняет - чип остаётся на месте и только подсвечивается
  * (при закреплении наверху браузерный scroll anchoring уводил скролл за чипом).
+ * keep - теги, которые видны и за лимитом (выбранные в фильтре: снять галочку
+ * должно быть можно, не раскрывая категорию); они стоят на своём месте по счёту.
  * hidden - сколько не влезло в лимит.
  */
 export function previewTags(
   tags: readonly CatalogTag[],
   limit: number,
+  keep?: ReadonlySet<number>,
 ): { visible: CatalogTag[]; hidden: number } {
   const byLabel = byFolded((t: CatalogTag) => t.label);
   const ranked = [...tags].sort((a, b) => {
@@ -155,7 +158,7 @@ export function previewTags(
     if (a.count !== b.count) return b.count - a.count;
     return byLabel(a, b);
   });
-  const visible = limit > 0 ? ranked.slice(0, limit) : [];
+  const visible = ranked.filter((t, i) => i < limit || keep?.has(t.id) === true);
   return { visible, hidden: ranked.length - visible.length };
 }
 

@@ -1,17 +1,23 @@
-/** true, если событие клавиатуры произошло внутри поля ввода — горячие клавиши не перехватываем. */
+/**
+ * true, если событие клавиатуры произошло внутри поля ввода — горячие клавиши не перехватываем.
+ * Галочка (каталог тегов, выбор карточки) текст не принимает: после щелчка по ней
+ * Esc, Delete и стрелки должны работать как обычно.
+ */
 export function isTypingTarget(target: EventTarget | null): boolean {
   if (!(target instanceof HTMLElement)) return false;
   return (
-    target instanceof HTMLInputElement ||
+    (target instanceof HTMLInputElement && target.type !== 'checkbox') ||
     target instanceof HTMLTextAreaElement ||
     target instanceof HTMLSelectElement ||
     target.isContentEditable
   );
 }
 
-/** Enter/пробел на кнопке или ссылке — это её собственное нажатие, не наш хоткей. */
+/** Enter/пробел на кнопке, ссылке или галочке — это её собственное нажатие, не наш хоткей. */
 export function isInteractiveTarget(target: EventTarget | null): boolean {
-  return target instanceof Element && target.closest('button, a[href], [role="button"]') !== null;
+  return (
+    target instanceof Element && target.closest('button, a[href], [role="button"], input[type="checkbox"]') !== null
+  );
 }
 
 /** Скачивание через cookie-эндпоинты: имя файла придёт в Content-Disposition. */

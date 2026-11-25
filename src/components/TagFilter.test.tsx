@@ -6,142 +6,118 @@ import { EMPTY_FILTER } from '../lib/tagFilter';
 import type { TagFilter } from '../lib/tagFilter';
 import { installFakeServer } from '../test/fakeServer';
 import { makeCategories, makeWrapper } from '../test/tags';
-import { FilterPanel } from './TagFilter';
+import { FilterBar } from './TagFilter';
 
 beforeEach(() => {
-  installFakeServer({ 'GET /api/v1/tags': () => ({ json: { categories: makeCategories() } }) });
+  installFakeServer({
+    'GET /api/v1/tags': () => ({ json: { categories: makeCategories() } }),
+    'GET /api/v1/folders': () => ({ json: { folders: [{ id: 7, parentId: null, name: 'Поездки' }] } }),
+  });
 });
 afterEach(() => vi.unstubAllGlobals());
 
 function Harness({
-  initial = EMPTY_FILTER,
-  canScopeFolder = true,
+  initial,
+  folderId,
   onChange,
-  onClose = vi.fn(),
 }: {
-  initial?: TagFilter;
-  canScopeFolder?: boolean;
+  initial: TagFilter;
+  folderId: number | null;
   onChange: (f: TagFilter) => void;
-  onClose?: () => void;
 }) {
   const [filter, setFilter] = useState(initial);
   return (
-    <FilterPanel
+    <FilterBar
       filter={filter}
-      canScopeFolder={canScopeFolder}
+      folderId={folderId}
       onChange={(f) => {
         onChange(f);
         setFilter(f);
       }}
-      onClose={onClose}
     />
   );
 }
 
-function mount(props: { initial?: TagFilter; canScopeFolder?: boolean; onClose?: () => void } = {}) {
+function mount(initial: TagFilter, folderId: number | null = 7) {
   const onChange = vi.fn();
-  render(<Harness onChange={onChange} {...props} />, { wrapper: makeWrapper().Wrapper });
-  const panel = screen.getByRole('complementary', { name: 'Фильтр по тегам' });
-  return { panel, onChange, user: userEvent.setup() };
+  render(<Harness initial={initial} folderId={folderId} onChange={onChange} />, { wrapper: makeWrapper().Wrapper });
+  const bar = screen.getByRole('region', { name: 'Фильтр по тегам' });
+  return { bar, onChange, user: userEvent.setup() };
 }
 
-describe('FilterPanel: каталог тегов', () => {
-  it('все категории и теги со счётчиками - выбирать можно без ввода', async () => {
-    const { panel } = mount();
-    const character = await within(panel).findByRole('region', { name: 'Категория character' });
-    expect(within(character).getByRole('button', { name: /eris greyrat/ })).toHaveTextContent('3');
-    expect(within(character).getByRole('button', { name: /roxy migurdia/ })).toHaveTextContent('1');
-    expect(within(panel).getByRole('region', { name: 'Категория language' })).toBeInTheDocument();
+describe('FilterBar: что выбрано', () => {
+  it('теги фразой по категориям: внутри «или», между «и»', async () => {
+    const { bar } = mount({ ...EMPTY_FILTER, tags: [1, 5, 2] });
+    const list = within(bar).getByRole('list', { name: 'Выбранные теги' });
+    await within(list).findByText('eris greyrat');
+    expect(list).toHaveTextContent('character:eris greyrat✕илиroxy migurdia✕иlanguage:ru✕');
   });
 
-  it('клик по тегу добавляет его в фильтр и подсвечивает в каталоге', async () => {
-    const { panel, onChange, user } = mount();
-    const character = await within(panel).findByRole('region', { name: 'Категория character' });
-    const tag = within(character).getByRole('button', { name: /eris greyrat/ });
-    await user.click(tag);
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [1], match: 'categories', scope: 'vault' });
-    expect(tag).toHaveAttribute('aria-pressed', 'true');
-    expect(within(panel).getByRole('list', { name: 'Выбранные теги' })).toHaveTextContent('character: eris greyrat');
+  it('«Все И» - «и» везде, «Все ИЛИ» - «или» везде', async () => {
+    const { bar, user } = mount({ tags: [1, 2, 5], match: 'all', scope: 'vault' });
+    const list = within(bar).getByRole('list', { name: 'Выбранные теги' });
+    await within(list).findByText('eris greyrat');
+    expect(list).toHaveTextContent('eris greyrat✕иroxy migurdia✕иlanguage');
+    await user.selectOptions(within(bar).getByRole('combobox', { name: 'Сочетание тегов' }), 'any');
+    expect(list).toHaveTextContent('eris greyrat✕илиroxy migurdia✕илиlanguage');
   });
 
-  it('повторный клик по выбранному тегу убирает его', async () => {
-    const { panel, onChange, user } = mount({ initial: { ...EMPTY_FILTER, tags: [1] } });
-    const character = await within(panel).findByRole('region', { name: 'Категория character' });
-    await user.click(within(character).getByRole('button', { name: /eris greyrat/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [], match: 'categories', scope: 'vault' });
-  });
-
-  it('выбор через поле с автодополнением тоже работает', async () => {
-    const { panel, onChange, user } = mount();
-    await user.type(within(panel).getByRole('combobox'), 'eris');
-    await user.click(await within(panel).findByRole('option', { name: /character: eris greyrat/ }));
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [1], match: 'categories', scope: 'vault' });
-    expect(within(panel).getByRole('list', { name: 'Выбранные теги' })).toHaveTextContent('character: eris greyrat');
+  it('крестик убирает тег, «Сбросить» - все, режим и область остаются', async () => {
+    const { bar, onChange, user } = mount({ tags: [1, 5], match: 'all', scope: 'folder' });
+    await user.click(await within(bar).findByRole('button', { name: 'Убрать из фильтра «character: eris greyrat»' }));
+    expect(onChange).toHaveBeenLastCalledWith({ tags: [5], match: 'all', scope: 'folder' });
+    await user.click(within(bar).getByRole('button', { name: 'Сбросить' }));
+    expect(onChange).toHaveBeenLastCalledWith({ tags: [], match: 'all', scope: 'folder' });
   });
 });
 
-describe('FilterPanel: режимы', () => {
-  it('по умолчанию: «И между категориями, ИЛИ внутри», весь сейф', async () => {
-    const { panel } = mount();
-    const match = within(panel).getByRole('radiogroup', { name: 'Сочетание тегов' });
-    expect(within(match).getByRole('radio', { name: 'И между категориями, ИЛИ внутри' })).toBeChecked();
-    expect(within(match).getByRole('radio', { name: 'Все И' })).not.toBeChecked();
-    expect(within(match).getByRole('radio', { name: 'Все ИЛИ' })).not.toBeChecked();
-    const scope = within(panel).getByRole('radiogroup', { name: 'Область поиска' });
-    expect(within(scope).getByRole('radio', { name: 'Весь сейф' })).toBeChecked();
+describe('FilterBar: «+ тег»', () => {
+  it('добавляет тег через поле с подсказками', async () => {
+    const { bar, onChange, user } = mount({ ...EMPTY_FILTER, tags: [5] });
+    await user.click(within(bar).getByRole('button', { name: '+ тег' }));
+    await user.type(within(bar).getByRole('combobox', { name: 'Добавить тег в фильтр' }), 'eris');
+    await user.click(await within(bar).findByRole('option', { name: /character: eris greyrat/ }));
+    expect(onChange).toHaveBeenLastCalledWith({ tags: [5, 1], match: 'categories', scope: 'vault' });
+    expect(within(bar).queryByRole('combobox', { name: 'Добавить тег в фильтр' })).toBeNull();
   });
 
-  it('создавать теги здесь нельзя: вместо «Создать…» - «такого тега нет»', async () => {
-    const { panel, onChange, user } = mount();
-    await user.type(within(panel).getByRole('combobox'), 'место:Рим');
-    expect(await within(panel).findByText('Такого тега нет')).toBeInTheDocument();
-    expect(screen.queryByRole('option')).toBeNull();
+  it('создавать теги здесь нельзя, выбранный повторно не предлагается', async () => {
+    const { bar, onChange, user } = mount({ ...EMPTY_FILTER, tags: [5] });
+    await user.click(within(bar).getByRole('button', { name: '+ тег' }));
+    const input = within(bar).getByRole('combobox', { name: 'Добавить тег в фильтр' });
+    await user.type(input, 'место:Рим');
+    expect(await within(bar).findByText('Такого тега нет')).toBeInTheDocument();
     await user.keyboard('{Enter}');
     expect(onChange).not.toHaveBeenCalled();
+    await user.clear(input);
+    await user.type(input, 'language:ru');
+    expect(await within(bar).findByText('Этот тег уже добавлен')).toBeInTheDocument();
+  });
+});
+
+describe('FilterBar: сочетание и область', () => {
+  it('по умолчанию: «И между категориями, ИЛИ внутри», весь сейф', () => {
+    const { bar } = mount({ ...EMPTY_FILTER, tags: [1] });
+    expect(within(bar).getByRole('combobox', { name: 'Сочетание тегов' })).toHaveValue('categories');
+    const scope = within(bar).getByRole('radiogroup', { name: 'Область поиска' });
+    expect(within(scope).getByRole('radio', { name: 'Весь сейф' })).toHaveAttribute('aria-checked', 'true');
   });
 
-  it('уже выбранный тег повторно не предлагается', async () => {
-    const { panel, user } = mount({ initial: { ...EMPTY_FILTER, tags: [5] } });
-    await user.type(within(panel).getByRole('combobox'), 'language:ru');
-    expect(await within(panel).findByText('Этот тег уже добавлен')).toBeInTheDocument();
-  });
-
-  it('режим сочетания переключается, теги и область сохраняются', async () => {
-    const { panel, onChange, user } = mount({ initial: { ...EMPTY_FILTER, tags: [1, 5] } });
-    await user.click(within(panel).getByRole('radio', { name: 'Все И' }));
+  it('сочетание переключается, теги и область сохраняются', async () => {
+    const { bar, onChange, user } = mount({ ...EMPTY_FILTER, tags: [1, 5] });
+    await user.selectOptions(within(bar).getByRole('combobox', { name: 'Сочетание тегов' }), 'all');
     expect(onChange).toHaveBeenLastCalledWith({ tags: [1, 5], match: 'all', scope: 'vault' });
-    await user.click(within(panel).getByRole('radio', { name: 'Все ИЛИ' }));
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [1, 5], match: 'any', scope: 'vault' });
   });
 
-  it('область: «В этой папке» доступна, если открыта папка', async () => {
-    const { panel, onChange, user } = mount({ initial: { ...EMPTY_FILTER, tags: [1] } });
-    await user.click(within(panel).getByRole('radio', { name: 'В этой папке' }));
+  it('область: открытая папка - с её именем', async () => {
+    const { bar, onChange, user } = mount({ ...EMPTY_FILTER, tags: [1] });
+    await user.click(await within(bar).findByRole('radio', { name: 'В «Поездки»' }));
     expect(onChange).toHaveBeenLastCalledWith({ tags: [1], match: 'categories', scope: 'folder' });
   });
 
-  it('в корне «В этой папке» недоступна, действует весь сейф', async () => {
-    const { panel } = mount({ initial: { tags: [1], match: 'categories', scope: 'folder' }, canScopeFolder: false });
-    expect(within(panel).getByRole('radio', { name: 'В этой папке' })).toBeDisabled();
-    expect(within(panel).getByRole('radio', { name: 'Весь сейф' })).toBeChecked();
-  });
-});
-
-describe('FilterPanel: выбранные и закрытие', () => {
-  it('крестик убирает тег из фильтра, «Сбросить» - все, режим остаётся', async () => {
-    const { panel, onChange, user } = mount({ initial: { tags: [1, 5], match: 'all', scope: 'vault' } });
-    await user.click(
-      await within(panel).findByRole('button', { name: 'Убрать из фильтра «character: eris greyrat»' }),
-    );
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [5], match: 'all', scope: 'vault' });
-    await user.click(within(panel).getByRole('button', { name: 'Сбросить фильтр' }));
-    expect(onChange).toHaveBeenLastCalledWith({ tags: [], match: 'all', scope: 'vault' });
-  });
-
-  it('✕ в заголовке закрывает панель', async () => {
-    const onClose = vi.fn();
-    const { panel, user } = mount({ onClose });
-    await user.click(within(panel).getByRole('button', { name: 'Закрыть панель фильтра' }));
-    expect(onClose).toHaveBeenCalledOnce();
+  it('в корне «в папке» недоступна, действует весь сейф', () => {
+    const { bar } = mount({ tags: [1], match: 'categories', scope: 'folder' }, null);
+    expect(within(bar).getByRole('radio', { name: 'В этой папке' })).toBeDisabled();
+    expect(within(bar).getByRole('radio', { name: 'Весь сейф' })).toHaveAttribute('aria-checked', 'true');
   });
 });

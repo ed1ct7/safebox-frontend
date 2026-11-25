@@ -5,8 +5,6 @@ import { filesFromInput } from '../lib/dnd';
 import { isHttpUrl } from '../lib/link';
 import { supportsWatch } from '../lib/fsAccess';
 import { useDismiss } from '../hooks/useDismiss';
-import { isFilterActive } from '../lib/tagFilter';
-import type { TagFilter } from '../lib/tagFilter';
 import { ChangePasswordDialog } from './ChangePasswordDialog';
 import { SettingsMenu } from './SettingsMenu';
 import { useToast } from './Toasts';
@@ -17,13 +15,6 @@ export interface TopBarProps {
   searchActive: boolean; // поиск по тексту идёт (есть крошка «Поиск: …»)
   searchText: string; // текущий текст поля (до дебаунса)
   onSearchText: (text: string) => void;
-  filter: TagFilter;
-  filterSummary: string | null; // текст крошки «Фильтр: …»; null — фильтр не задан
-  filterOpen: boolean; // открыта панель фильтра справа
-  onToggleFilter: () => void;
-  onFilterChange: (filter: TagFilter) => void;
-  tagsOpen: boolean; // открыт экран «Теги»
-  onToggleTags: () => void;
   onNavigate: (id: number | null) => void;
   onImportFiles: (files: PendingFile[]) => void;
   onWatchFolder: () => void;
@@ -45,22 +36,8 @@ export function TopBar(props: TopBarProps) {
       <div className="min-w-0 flex-1">
         {props.path === null ? (
           <span className="flex min-w-0 items-center gap-4 text-sm text-zinc-300">
-            {props.filterSummary !== null && (
-              <span className="flex min-w-0 items-center gap-2">
-                <span className="truncate" title={props.filterSummary}>
-                  🏷 Фильтр: {props.filterSummary}
-                </span>
-                <button
-                  type="button"
-                  className="shrink-0 rounded px-1.5 text-zinc-500 transition hover:bg-zinc-800 hover:text-zinc-200"
-                  title="Сбросить фильтр"
-                  aria-label="Сбросить фильтр"
-                  onClick={() => props.onFilterChange({ ...props.filter, tags: [] })}
-                >
-                  ✕
-                </button>
-              </span>
-            )}
+            {/* что выбрано по тегам - в строке фильтра над галереей, здесь не повторяем */}
+            {!props.searchActive && <span className="text-zinc-500">Отбор по тегам</span>}
             {props.searchActive && (
               <span className="flex min-w-0 items-center gap-2">
                 <span className="truncate">🔍 Поиск: «{props.searchQuery}»</span>
@@ -82,33 +59,7 @@ export function TopBar(props: TopBarProps) {
       </div>
 
       <SearchInput text={props.searchText} onText={props.onSearchText} />
-      <button
-        type="button"
-        className={`${toolButton} ${props.filterOpen || isFilterActive(props.filter) ? 'border-accent text-zinc-100' : ''}`}
-        aria-pressed={props.filterOpen}
-        title="Фильтр по тегам"
-        onClick={props.onToggleFilter}
-      >
-        Фильтр
-        {isFilterActive(props.filter) && (
-          <span
-            className="rounded-full bg-accent px-1.5 text-xs leading-5 text-white"
-            aria-label={`Выбрано тегов: ${props.filter.tags.length}`}
-          >
-            {props.filter.tags.length}
-          </span>
-        )}
-      </button>
       <LinkInput onAdd={props.onAddLink} />
-      <button
-        type="button"
-        className={`${toolButton} ${props.tagsOpen ? 'border-accent text-zinc-100' : ''}`}
-        aria-pressed={props.tagsOpen}
-        title="Категории и теги: переименовать, слить, удалить"
-        onClick={props.onToggleTags}
-      >
-        🏷 Теги
-      </button>
       <button
         type="button"
         className={toolButton}

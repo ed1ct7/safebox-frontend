@@ -35,7 +35,7 @@ import { foldForSearch } from '../lib/fold';
 import { firstLine, plural } from '../lib/format';
 import type { MenuAction } from '../lib/menu';
 import { isNavKey } from '../lib/selection';
-import { EMPTY_FILTER, filterSummary, isFilterActive, pruneFilterTags, searchOptionsFor } from '../lib/tagFilter';
+import { EMPTY_FILTER, isFilterActive, pruneFilterTags, searchOptionsFor } from '../lib/tagFilter';
 import type { TagFilter } from '../lib/tagFilter';
 import { pathNames } from '../lib/tags';
 import { isTable } from '../lib/table';
@@ -76,8 +76,9 @@ import { SelectionBar } from './SelectionBar';
 import { StatusBar } from './StatusBar';
 import { TableView } from './TableView';
 import type { TableViewHandle } from './TableView';
-import { FilterPanel } from './TagFilter';
-import { TagSidebar } from './TagSidebar';
+import { DockedWorkspace } from './PanelDock';
+import { FilterBar } from './TagFilter';
+import { TagsPanelActions, TagsPanelBody } from './TagsPanel';
 import { TagsScreen } from './TagsScreen';
 import { TopBar } from './TopBar';
 import { useToast } from './Toasts';
@@ -131,7 +132,6 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const [filter, setFilter] = useState<TagFilter>(EMPTY_FILTER);
   const isFilter = isFilterActive(filter);
   const showResults = isSearch || isFilter;
-  const [filterOpen, setFilterOpen] = useState(false); // панель фильтра справа
   const [tagsOpen, setTagsOpen] = useState(false);
   const [trashOpen, setTrashOpen] = useState(false); // вместо галереи - корзина
 
@@ -624,7 +624,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   });
 
   // клик по тегу на экране «Теги», чипу карточки или панели свойств: фильтр по
-  // нему на весь сейф; панель фильтра открывается - видно, что выбрано
+  // нему на весь сейф; что выбрано - в строке фильтра над галереей
   const filterByTag = useEvent((tagId: number) => {
     setFilter((f) => ({ ...f, tags: [tagId], scope: 'vault' }));
     setSearchText('');
@@ -632,17 +632,31 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     setTagsOpen(false);
     setTrashOpen(false);
     setRenamingId(null);
-    setFilterOpen(true);
   });
 
-  // тег в каталоге слева: добавить в фильтр или убрать (можно несколько)
+  // галочка в панели «Теги»: добавить тег в фильтр или убрать (можно несколько)
   const toggleFilterTag = useEvent((next: TagFilter) => {
     setFilter(next);
     setSearchText('');
     setCommittedQuery('');
     setTrashOpen(false);
     setRenamingId(null);
-    setFilterOpen(true);
+  });
+
+  // папка в дереве при заданном фильтре - фильтр сужается до неё (корень - весь
+  // сейф), теги остаются; без фильтра - обычный переход в папку
+  const navigateTree = useEvent((id: number | null) => {
+    if (!isFilterActive(filter)) {
+      navigate(id);
+      return;
+    }
+    setFolderId(id);
+    setFilter((f) => ({ ...f, scope: id === null ? 'vault' : 'folder' }));
+    setTagsOpen(false);
+    setTrashOpen(false);
+    setRenamingId(null);
+    setReveal(null);
+    clearSelection();
   });
 
   // ── Ссылки (UF-6) ─────────────────────────────────────────────────────────
@@ -772,7 +786,6 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       // сверху лежат панели: сначала закрываем их, потом снимаем выделение
       if (propsOpen) setPropsOpen(false);
       else if (selected.size > 0) selection.clear();
-      else if (filterOpen) setFilterOpen(false);
       else if (isSearch) setSearchText('');
       else if (isFilter) setFilter((f) => ({ ...f, tags: [] }));
     } else if (e.key === 'F2') {
@@ -908,6 +921,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     );
   }
 
+  // подсветка в дереве: открытая папка; при фильтре - только если он сужен до неё
+  const treeCurrent = trashOpen || isSearch || (isFilter && filter.scope !== 'folder') ? undefined : folderId;
+
   // не догрузилась страница - загруженное остаётся на экране, причина в строке состояния
   const contentError = content.isFetchNextPageError ? null : (content.error ?? null);
   const loading = showResults ? search.isPending : listing.isPending;
@@ -926,13 +942,6 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             setTrashOpen(false);
           }
         }}
-        filter={filter}
-        filterSummary={isFilter ? filterSummary(filter, catalog, folderId) : null}
-        filterOpen={filterOpen}
-        onToggleFilter={() => setFilterOpen((open) => !open)}
-        onFilterChange={changeFilter}
-        tagsOpen={tagsOpen}
-        onToggleTags={() => setTagsOpen((open) => !open)}
         onNavigate={navigate}
         onImportFiles={(files) => importFiles(files)}
         onWatchFolder={() => void watch.enable()}
@@ -943,45 +952,57 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         safe={safe}
       />
 
-      <div className="flex min-h-0 flex-1">
-        {/* [overflow-anchor:none]: выбранный тег закрепляется в начале категории, и без этого
-            браузерный scroll anchoring тянет скролл колонки вверх за уехавшим чипом */}
-        <aside className="[overflow-anchor:none] w-60 shrink-0 overflow-y-auto border-r border-zinc-800 py-3">
-          <p className="px-4 pb-1 text-[11px] font-semibold uppercase tracking-wider text-zinc-600">
-            Папки
-          </p>
-          <FolderTree
-            current={showResults || trashOpen ? undefined : folderId}
-            expandPath={expandPath}
-            onNavigate={navigate}
-            dnd={dnd.tree}
-          />
-          <div className="px-2 pt-1">
-            <button
-              type="button"
-              aria-current={trashOpen ? 'page' : undefined}
-              className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition ${
-                trashOpen ? 'bg-accent/20 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
-              }`}
-              onClick={() => {
-                setTrashOpen(true);
-                setTagsOpen(false);
-                setRenamingId(null);
-                clearSelection();
-              }}
-            >
-              <span aria-hidden="true">🗑</span>
-              <span className="flex-1">Корзина</span>
-              {trashCount > 0 && <span className="text-xs tabular-nums text-zinc-500">{trashCount}</span>}
-            </button>
-          </div>
-          <TagSidebar
-            filter={filter}
-            onToggleTag={toggleFilterTag}
-            onManage={() => setTagsOpen(true)}
-          />
-        </aside>
-
+      <DockedWorkspace
+        panels={{
+          folders: {
+            title: 'Папки',
+            children: (
+              <div className="pb-2">
+                <FolderTree
+                  current={treeCurrent}
+                  expandPath={expandPath}
+                  onNavigate={navigateTree}
+                  dnd={dnd.tree}
+                />
+                <div className="px-2 pt-1">
+                  <button
+                    type="button"
+                    aria-current={trashOpen ? 'page' : undefined}
+                    className={`flex w-full items-center gap-2 rounded-md px-2 py-1 text-left text-sm transition ${
+                      trashOpen ? 'bg-accent/20 text-zinc-100' : 'text-zinc-400 hover:bg-zinc-800/60 hover:text-zinc-200'
+                    }`}
+                    onClick={() => {
+                      setTrashOpen(true);
+                      setTagsOpen(false);
+                      setRenamingId(null);
+                      clearSelection();
+                    }}
+                  >
+                    <span aria-hidden="true">🗑</span>
+                    <span className="flex-1">Корзина</span>
+                    {trashCount > 0 && <span className="text-xs tabular-nums text-zinc-500">{trashCount}</span>}
+                  </button>
+                </div>
+              </div>
+            ),
+          },
+          tags: {
+            title: 'Теги',
+            label: 'Каталог тегов',
+            badge: isFilter ? (
+              <span
+                className="rounded-full bg-accent px-1.5 text-[10px] font-medium normal-case leading-4 tracking-normal text-white"
+                aria-label={`Выбрано тегов: ${filter.tags.length}`}
+                title="Выбрано в фильтре"
+              >
+                {filter.tags.length}
+              </span>
+            ) : undefined,
+            actions: <TagsPanelActions onManage={() => setTagsOpen(true)} />,
+            children: <TagsPanelBody filter={filter} onToggleTag={toggleFilterTag} />,
+          },
+        }}
+      >
         {propsOpen && (
           <PropertiesPanel
             target={propsTarget}
@@ -998,9 +1019,11 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         {trashOpen ? (
           <TrashView onChanged={() => (lastTrashed.current = null)} />
         ) : (
+          <div className="flex min-w-0 flex-1 flex-col">
+          {isFilter && <FilterBar filter={filter} folderId={folderId} onChange={changeFilter} />}
           <main
             ref={mainRef}
-            className={`flex-1 overflow-y-auto p-4 pb-20 ${rubber.box !== null ? 'select-none' : ''}`}
+            className={`min-h-0 flex-1 overflow-y-auto p-4 pb-20 ${rubber.box !== null ? 'select-none' : ''}`}
             onPointerDown={rubber.onPointerDown}
             onClick={(e) => {
               if (rubber.justCommitted.current) {
@@ -1036,17 +1059,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
               />
             )}
           </main>
+          </div>
         )}
-
-        {filterOpen && (
-          <FilterPanel
-            filter={filter}
-            canScopeFolder={folderId !== null}
-            onChange={changeFilter}
-            onClose={() => setFilterOpen(false)}
-          />
-        )}
-      </div>
+      </DockedWorkspace>
 
       <StatusBar
         safe={safe}

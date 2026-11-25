@@ -6,9 +6,9 @@ import { installFakeServer } from '../test/fakeServer';
 import { makeWrapper } from '../test/tags';
 import { TagCatalogList } from './TagCatalogList';
 
-// Каталог тегов для панелей (UF-18): сворки категорий, компактный вид «популярные
-// + Ещё N», поиск по имени; выбранные подсвечиваются, не меняя порядка;
-// состояние сворок - в localStorage.
+// Каталог тегов панели «Теги» (UF-18): строки с галочками, сворки категорий,
+// компактный вид «популярные + Ещё N», поиск по имени; выбранные отмечены, не
+// меняя порядка, и видны даже за лимитом; состояние сворок - в localStorage.
 
 let categories: Category[];
 
@@ -47,18 +47,18 @@ describe('компактный вид и «Ещё N»', () => {
   it('в компактном виде популярные теги, остальные за «Ещё N»', async () => {
     mount();
     const section = await screen.findByRole('region', { name: 'Категория character' });
-    expect(within(section).getAllByRole('button', { name: /^tag/ })).toHaveLength(10);
+    expect(within(section).getAllByRole('checkbox', { name: /^tag/ })).toHaveLength(10);
     expect(within(section).getByRole('button', { name: 'Ещё 3…' })).toBeInTheDocument();
-    expect(within(section).queryByRole('button', { name: 'tag 01 1' })).toBeNull();
+    expect(within(section).queryByRole('checkbox', { name: 'tag 01' })).toBeNull();
   });
 
   it('«Ещё N» раскрывает полный список, «Свернуть» возвращает компактный вид', async () => {
     const { user } = mount();
     const section = await screen.findByRole('region', { name: 'Категория character' });
     await user.click(within(section).getByRole('button', { name: 'Ещё 3…' }));
-    expect(within(section).getAllByRole('button', { name: /^tag/ })).toHaveLength(13);
+    expect(within(section).getAllByRole('checkbox', { name: /^tag/ })).toHaveLength(13);
     await user.click(within(section).getByRole('button', { name: 'Свернуть' }));
-    expect(within(section).getAllByRole('button', { name: /^tag/ })).toHaveLength(10);
+    expect(within(section).getAllByRole('checkbox', { name: /^tag/ })).toHaveLength(10);
   });
 
   it('сворачивание категории запоминается в localStorage и переживает перемонтирование', async () => {
@@ -67,13 +67,13 @@ describe('компактный вид и «Ещё N»', () => {
     expect(header).toHaveAttribute('aria-expanded', 'true');
     await user.click(header);
     expect(header).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: /^tag/ })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /^tag/ })).toBeNull();
     expect(JSON.parse(localStorage.getItem('test-catalog')!)).toEqual({ collapsed: [10], full: [] });
 
     unmount();
     mount();
     expect(await screen.findByRole('button', { name: 'character 13' })).toHaveAttribute('aria-expanded', 'false');
-    expect(screen.queryByRole('button', { name: /^tag/ })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: /^tag/ })).toBeNull();
   });
 });
 
@@ -95,31 +95,34 @@ describe('выбранные теги', () => {
     ];
   });
 
-  it('выбранный тег остаётся на месте и подсвечен; клик переключает', async () => {
+  it('выбранный тег остаётся на месте и отмечен; клик переключает', async () => {
     const { onToggle, user } = mount(new Set([2]), 2);
     const section = await screen.findByRole('region', { name: 'Категория character' });
     // порядок только по счётчикам: eris и roxy в компактном виде, roxy выбран
-    expect(within(section).getByRole('button', { name: 'eris 5' })).toHaveAttribute('aria-pressed', 'false');
-    expect(within(section).getByRole('button', { name: 'roxy 3' })).toHaveAttribute('aria-pressed', 'true');
-    await user.click(within(section).getByRole('button', { name: 'roxy 3' }));
+    const rows = within(section).getAllByRole('checkbox');
+    expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual(['eris', 'roxy']);
+    expect(within(section).getByRole('checkbox', { name: 'eris' })).not.toBeChecked();
+    expect(within(section).getByRole('checkbox', { name: 'roxy' })).toBeChecked();
+    expect(within(section).getByText('5')).toBeInTheDocument(); // счётчик записей в строке
+    await user.click(within(section).getByRole('checkbox', { name: 'roxy' }));
     expect(onToggle).toHaveBeenCalledWith(2);
   });
 
-  it('выбранный тег с малым счётчиком не лезет в компактный вид - за «Ещё N»', async () => {
+  it('выбранный тег за лимитом всё равно виден - снять галочку можно сразу', async () => {
     mount(new Set([3]), 2);
     const section = await screen.findByRole('region', { name: 'Категория character' });
-    expect(within(section).queryByRole('button', { name: 'hinata 0' })).toBeNull();
-    expect(within(section).getByRole('button', { name: 'Ещё 2…' })).toBeInTheDocument();
+    const rows = within(section).getAllByRole('checkbox');
+    expect(rows.map((r) => r.getAttribute('aria-label'))).toEqual(['eris', 'roxy', 'hinata']);
+    expect(within(section).getByRole('checkbox', { name: 'hinata' })).toBeChecked();
+    expect(within(section).getByRole('button', { name: 'Ещё 1…' })).toBeInTheDocument();
   });
 
-  it('у свернутой категории с выбранными - точка-метка, без выбранных - нет', async () => {
+  it('у категории с выбранными - их число, видно и в свернутой', async () => {
     const { user } = mount(new Set([5]), 2);
-    const header = await screen.findByRole('button', { name: 'language 1' });
+    const header = await screen.findByRole('button', { name: 'language 1 1' });
     await user.click(header);
-    expect(within(header).getByTitle('Есть выбранные теги')).toBeInTheDocument();
-    expect(
-      within(screen.getByRole('button', { name: 'character 4' })).queryByTitle('Есть выбранные теги'),
-    ).toBeNull();
+    expect(within(header).getByTitle('Выбрано в фильтре')).toHaveTextContent('1');
+    expect(within(screen.getByRole('button', { name: 'character 4' })).queryByTitle('Выбрано в фильтре')).toBeNull();
   });
 });
 
@@ -142,11 +145,11 @@ describe('поиск по имени', () => {
   it('находит по подстроке во всех категориях, скрывая остальные; очистка возвращает каталог', async () => {
     const { user } = mount();
     await user.type(await screen.findByLabelText('Фильтровать теги по имени'), 'grey');
-    expect(await screen.findByRole('button', { name: 'eris greyrat 3' })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: 'roxy migurdia 1' })).toBeNull();
-    expect(screen.queryByRole('button', { name: 'ru 4' })).toBeNull();
+    expect(await screen.findByRole('checkbox', { name: 'eris greyrat' })).toBeInTheDocument();
+    expect(screen.queryByRole('checkbox', { name: 'roxy migurdia' })).toBeNull();
+    expect(screen.queryByRole('checkbox', { name: 'ru' })).toBeNull();
     await user.click(screen.getByRole('button', { name: 'Очистить фильтр тегов' }));
-    expect(await screen.findByRole('button', { name: 'ru 4' })).toBeInTheDocument();
+    expect(await screen.findByRole('checkbox', { name: 'ru' })).toBeInTheDocument();
   });
 
   it('нет совпадений - «Ничего не найдено»', async () => {

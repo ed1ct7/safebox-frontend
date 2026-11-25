@@ -29,6 +29,25 @@
   ::-webkit-scrollbar-track {
     background: transparent;
   }
+
+  /* перенос панели и протягивание границ (PanelDock): курсор один на всё окно, текст не выделяется */
+  body.sbx-panel-drag,
+  body.sbx-resize-col,
+  body.sbx-resize-row {
+    user-select: none;
+  }
+  body.sbx-panel-drag,
+  body.sbx-panel-drag * {
+    cursor: grabbing !important;
+  }
+  body.sbx-resize-col,
+  body.sbx-resize-col * {
+    cursor: col-resize !important;
+  }
+  body.sbx-resize-row,
+  body.sbx-resize-row * {
+    cursor: row-resize !important;
+  }
 }
 
 /* Заметка .md в просмотре (MarkdownView): плагина typography нет - свои правила */
