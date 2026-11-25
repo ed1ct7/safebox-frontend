@@ -30,3 +30,87 @@
     background: transparent;
   }
 }
+
+/* Заметка .md в просмотре (MarkdownView): плагина typography нет - свои правила */
+@layer components {
+  .md-view {
+    @apply text-[15px] leading-relaxed text-zinc-200;
+    overflow-wrap: anywhere;
+  }
+  .md-view > :first-child {
+    @apply mt-0;
+  }
+  .md-view h1 {
+    @apply mb-3 mt-6 border-b border-zinc-800 pb-1 text-2xl font-semibold text-zinc-100;
+  }
+  .md-view h2 {
+    @apply mb-2 mt-5 border-b border-zinc-800 pb-1 text-xl font-semibold text-zinc-100;
+  }
+  .md-view h3 {
+    @apply mb-2 mt-4 text-lg font-semibold text-zinc-100;
+  }
+  .md-view h4,
+  .md-view h5,
+  .md-view h6 {
+    @apply mb-1 mt-3 font-semibold text-zinc-100;
+  }
+  .md-view p {
+    @apply my-2;
+  }
+  .md-view ul {
+    @apply my-2 list-disc pl-6;
+  }
+  .md-view ol {
+    @apply my-2 list-decimal pl-6;
+  }
+  .md-view li {
+    @apply my-0.5;
+  }
+  .md-view li > ul,
+  .md-view li > ol {
+    @apply my-0.5;
+  }
+  .md-view ul.contains-task-list {
+    @apply list-none pl-1;
+  }
+  .md-view input[type='checkbox'] {
+    @apply mr-1.5 align-middle accent-accent;
+  }
+  .md-view a {
+    @apply text-accent underline decoration-accent/40 underline-offset-2 hover:decoration-accent;
+  }
+  .md-view .md-dead-link {
+    @apply text-zinc-300 underline decoration-zinc-600 decoration-dotted underline-offset-2;
+  }
+  .md-view .md-image {
+    @apply rounded bg-zinc-800 px-1.5 py-0.5 text-sm text-zinc-400;
+  }
+  .md-view blockquote {
+    @apply my-3 border-l-4 border-zinc-700 pl-4 text-zinc-400;
+  }
+  .md-view code {
+    @apply rounded bg-zinc-800 px-1 py-0.5 font-mono text-[13px];
+  }
+  .md-view pre {
+    @apply my-3 overflow-x-auto rounded-lg bg-zinc-950 p-3 text-[13px] leading-snug;
+  }
+  .md-view pre code {
+    @apply bg-transparent p-0;
+  }
+  .md-view hr {
+    @apply my-5 border-zinc-800;
+  }
+  .md-view table {
+    @apply my-3 block overflow-x-auto border-collapse text-sm;
+  }
+  .md-view th,
+  .md-view td {
+    @apply border border-zinc-700 px-3 py-1.5 text-left align-top;
+  }
+  .md-view th {
+    @apply bg-zinc-800/60 font-semibold;
+  }
+  .md-view del {
+    @apply text-zinc-500;
+  }
+}

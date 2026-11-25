@@ -5,7 +5,7 @@ import { formatBytes, formatDateTime, plural } from '../lib/format';
 import { displayName } from '../lib/link';
 import { validateDescription, validateEntryName, validateLinkUrl } from '../lib/rules';
 import { EditableField } from './EditableField';
-import { GLYPHS, KIND_LABELS } from './EntryCard';
+import { glyphOf, KIND_LABELS } from './EntryCard';
 import { TagsSection } from './TagsSection';
 
 /** Что показывает панель: выделенные записи или, если выделения нет, открытая папка. */
@@ -38,7 +38,7 @@ function Preview({ entry }: { entry: Entry }) {
           className="h-full w-full object-contain"
         />
       ) : (
-        <span className="text-5xl opacity-50">{GLYPHS[entry.kind]}</span>
+        <span className="text-5xl opacity-50">{glyphOf(entry)}</span>
       )}
     </div>
   );

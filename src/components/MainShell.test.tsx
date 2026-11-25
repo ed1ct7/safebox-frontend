@@ -563,6 +563,29 @@ describe('модель B: клик выделяет, двойной клик о�
     expect(await screen.findByRole('dialog', { name: 'Просмотр фото' })).toBeInTheDocument();
   });
 
+  it('двойной клик: текст и аудио - в просмотр, прочий файл - скачивается', async () => {
+    const txt = makeEntry({ id: 11, name: 'заметки.txt', mime: 'text/plain' });
+    const oga = makeEntry({ id: 12, name: 'голос.oga', mime: 'application/octet-stream' });
+    const docx = makeEntry({ id: 13, name: 'отчёт.docx', mime: 'application/zip' });
+    overrides['GET /api/v1/entries'] = () => ({ json: { ...rootListing, entries: [...rootListing.entries, txt, oga, docx] } });
+    const media = [
+      vi.spyOn(HTMLMediaElement.prototype, 'play').mockResolvedValue(undefined),
+      vi.spyOn(HTMLMediaElement.prototype, 'pause').mockImplementation(() => undefined),
+      vi.spyOn(HTMLMediaElement.prototype, 'load').mockImplementation(() => undefined),
+    ]; // jsdom не играет медиа
+    await renderShell();
+    fireEvent.doubleClick(cardOf('заметки.txt'));
+    expect(await screen.findByRole('dialog', { name: 'Просмотр текста' })).toBeInTheDocument();
+    fireEvent.keyDown(window, { key: 'ArrowRight' }); // фото, текст и аудио - одна лента
+    expect(await screen.findByRole('dialog', { name: 'Прослушивание' })).toBeInTheDocument();
+    fireEvent.keyDown(document, { key: 'Escape' }); // Modal слушает document
+    await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull());
+    fireEvent.doubleClick(cardOf('отчёт.docx'));
+    expect(mocks.triggerDownload).toHaveBeenCalledWith('/api/v1/media/13/download');
+    expect(screen.queryByRole('dialog')).toBeNull();
+    for (const spy of media) spy.mockRestore();
+  });
+
   it('двойной клик по папке переходит в неё', async () => {
     await renderShell();
     fireEvent.doubleClick(cardOf('Папка'));

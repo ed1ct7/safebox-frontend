@@ -4,6 +4,7 @@ import type { Entry, EntryKind, SearchHit } from '../api/types';
 import { useEntryDrop } from '../hooks/useEntryDrop';
 import { useTagCatalog } from '../hooks/useTagCatalog';
 import { useThumbnailSrc } from '../hooks/useThumbnailSrc';
+import { isAudio } from '../lib/fileView';
 import { firstLine, formatBytes } from '../lib/format';
 import { displayName } from '../lib/link';
 import { cardTagChips } from '../lib/tags';
@@ -16,6 +17,11 @@ export const GLYPHS: Record<EntryKind, string> = {
   link: '🔗',
   file: '📄',
 };
+
+/** Значок записи: у аудиофайла - нота (вида записи «аудио» нет, это файл). */
+export function glyphOf(entry: Entry): string {
+  return isAudio(entry) ? '🎵' : GLYPHS[entry.kind];
+}
 
 export const KIND_LABELS: Record<EntryKind, string> = {
   folder: 'Папка',
@@ -167,9 +173,9 @@ export const EntryCard = memo(function EntryCard({
 
       <span
         className="absolute right-2 top-2 z-10 rounded bg-black/60 px-1.5 py-0.5 text-[11px] leading-none"
-        title={KIND_LABELS[entry.kind]}
+        title={isAudio(entry) ? 'Аудио' : KIND_LABELS[entry.kind]}
       >
-        {GLYPHS[entry.kind]}
+        {glyphOf(entry)}
       </span>
 
       <div className="relative mx-2 mt-2 flex aspect-[4/3] items-center justify-center overflow-hidden rounded-lg bg-zinc-950">
@@ -184,7 +190,7 @@ export const EntryCard = memo(function EntryCard({
             className="h-full w-full object-cover"
           />
         ) : (
-          <span className="text-4xl opacity-50">{GLYPHS[entry.kind]}</span>
+          <span className="text-4xl opacity-50">{glyphOf(entry)}</span>
         )}
         {matchedIn === 'description' && (
           <span

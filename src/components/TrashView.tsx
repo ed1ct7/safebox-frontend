@@ -13,7 +13,7 @@ import { useEvent, useWindowEvent } from '../hooks/useEvent';
 import { useSelection } from '../hooks/useSelection';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { ConfirmRequest } from './ConfirmDialog';
-import { GLYPHS } from './EntryCard';
+import { glyphOf } from './EntryCard';
 import { anyModalOpen } from './Modal';
 import { useToast } from './Toasts';
 
@@ -226,7 +226,7 @@ export function TrashView({ onChanged }: { onChanged?: () => void } = {}) {
                         }}
                       />
                     ) : (
-                      GLYPHS[e.kind]
+                      glyphOf(e)
                     )}
                   </span>
                   <span className="min-w-0 flex-1">

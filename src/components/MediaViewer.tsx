@@ -1,6 +1,10 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { MutableRefObject, PointerEvent } from 'react';
+import { handleUnauthorized } from '../api/client';
 import { mediaUrl } from '../api/endpoints';
+import { decodeText, isAudio, isMarkdown, isProse, isText, MARKDOWN_RENDER_LIMIT, TEXT_LIMIT } from '../lib/fileView';
+import type { DecodedText } from '../lib/fileView';
+import { formatBytes } from '../lib/format';
 import type { Entry, EntryPatch } from '../api/types';
 import { isInteractiveTarget, isTypingTarget, triggerDownload } from '../lib/dom';
 import { displayName } from '../lib/link';
@@ -23,21 +27,33 @@ interface View {
 
 const FIT: View = { scale: 1, x: 0, y: 0 };
 
-/** Что листает просмотрщик: фото, видео и ролики YouTube (ссылки). */
+// react-markdown - отдельный чанк: грузится при первой открытой заметке
+const MarkdownView = lazy(() => import('./MarkdownView'));
+
+/** Что листает просмотрщик: фото, видео, аудио, текстовые файлы и ролики YouTube (ссылки). */
 export function isViewable(entry: Entry): boolean {
-  return entry.kind === 'photo' || entry.kind === 'video' || (entry.kind === 'link' && parseYouTube(entry.url) !== null);
+  return (
+    entry.kind === 'photo' ||
+    entry.kind === 'video' ||
+    isAudio(entry) ||
+    isText(entry) ||
+    (entry.kind === 'link' && parseYouTube(entry.url) !== null)
+  );
 }
 
 function labelOf(entry: Entry): string {
   if (entry.kind === 'photo') return 'Просмотр фото';
   if (entry.kind === 'video') return 'Просмотр видео';
+  if (isAudio(entry)) return 'Прослушивание';
+  if (isText(entry)) return 'Просмотр текста';
   return 'Просмотр ролика';
 }
 
 /**
- * Полноэкранный просмотр (UF-4, UF-5, Ф4): ←/→ по фото, видео и роликам YouTube
- * текущего вида; Delete - в корзину, на место встаёт следующее; пробел на фото
- * закрывает (быстрый просмотр), на видео - пауза. Фото: колесо - зум 15–600%,
+ * Полноэкранный просмотр (UF-4, UF-5, Ф4): ←/→ по фото, видео, аудио, текстам и роликам
+ * YouTube текущего вида; Delete - в корзину, на место встаёт следующее; пробел на фото
+ * закрывает (быстрый просмотр), на видео и аудио - пауза, в тексте - листает его.
+ * Аудио, доиграв, переходит к следующему аудио (плейлист папки). Фото: колесо - зум 15–600%,
  * перетаскивание увеличенного, двойной клик - 100%/200%. Слева - панель тегов и
  * описания (🏷 возвращает). Esc или клик мимо - выход.
  */
@@ -69,7 +85,7 @@ export function MediaViewer({
   const [broken, setBroken] = useState(false);
   const [tagsOpen, setTagsOpen] = useState(true); // панель тегов открывается вместе с просмотром
   const stageRef = useRef<HTMLDivElement>(null);
-  const videoRef = useRef<HTMLVideoElement>(null);
+  const mediaRef = useRef<HTMLMediaElement | null>(null); // <video> или <audio> текущей записи
   const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
   const entry = items[index];
 
@@ -94,12 +110,12 @@ export function MediaViewer({
     else if (e.key === 'Delete' && onDelete !== undefined) {
       e.preventDefault();
       if (!e.repeat) onDelete(entry); // зажатый Delete не стирает ленту подряд
-    } else if (e.key === ' ' && !media && !isInteractiveTarget(e.target)) {
+    } else if (e.key === ' ' && !media && !isInteractiveTarget(e.target) && !isText(entry)) {
       e.preventDefault();
       if (e.repeat) return;
       if (entry.kind === 'photo') onClose();
-      else if (entry.kind === 'video') {
-        const v = videoRef.current;
+      else if (entry.kind === 'video' || isAudio(entry)) {
+        const v = mediaRef.current;
         if (v !== null) void (v.paused ? v.play().catch(() => undefined) : v.pause());
       }
     }
@@ -139,6 +155,14 @@ export function MediaViewer({
   };
 
   const yt = entry.kind === 'link' ? parseYouTube(entry.url) : null;
+  // доиграло - следующее аудио после текущего (без круга: после последнего трека - тишина).
+  // Не во время ввода в панели тегов/описания: поле сохраняется при потере фокуса в ту
+  // запись, что открыта в этот момент, - черновик ушёл бы следующему треку.
+  const nextAudio = () => {
+    if (isTypingTarget(document.activeElement)) return;
+    const next = items.findIndex((it, i) => i > index && isAudio(it));
+    if (next >= 0) onIndex(next);
+  };
 
   const arrowBtn =
     'absolute top-1/2 z-10 flex h-11 w-11 -translate-y-1/2 items-center justify-center rounded-full bg-zinc-900/80 text-xl text-zinc-200 transition hover:bg-zinc-800';
@@ -229,7 +253,11 @@ export function MediaViewer({
               />
             )
           ) : entry.kind === 'video' ? (
-            <VideoStage key={entry.id} entry={entry} videoRef={videoRef} onActivity={onActivity} />
+            <VideoStage key={entry.id} entry={entry} mediaRef={mediaRef} onActivity={onActivity} />
+          ) : isAudio(entry) ? (
+            <AudioStage key={entry.id} entry={entry} mediaRef={mediaRef} onActivity={onActivity} onEnded={nextAudio} />
+          ) : isText(entry) ? (
+            <TextStage key={entry.id} entry={entry} />
           ) : yt !== null ? (
             <YouTubeStage key={entry.id} entry={entry} video={yt} />
           ) : null}
@@ -250,48 +278,57 @@ export function MediaViewer({
 }
 
 /**
- * Плеер (UF-5): автозапуск, звук 80%, перемотка — сервер отдаёт Range-куски.
- * При уходе с видео поток обрывается явно: пока браузер держит соединение,
+ * При уходе с видео/аудио поток обрывается явно: пока браузер держит соединение,
  * сервер держит аренду сессии, и блокировка ждала бы её освобождения.
+ * Только у элемента, уже убранного из документа: StrictMode (dev) прогоняет очистку
+ * на живом элементе - без проверки плеер оставался без src.
  */
+function useAbortOnLeave(mediaRef: MutableRefObject<HTMLMediaElement | null>) {
+  useEffect(() => {
+    const media = mediaRef.current;
+    return () => {
+      if (media === null || media.isConnected) return;
+      media.pause();
+      media.removeAttribute('src');
+      media.load(); // обрывает загрузку
+    };
+  }, [mediaRef]);
+}
+
+function CannotShow({ entry, what }: { entry: Entry; what: string }) {
+  return (
+    <div className="flex flex-col items-center gap-3 text-center">
+      <p className="text-sm text-zinc-300">{what}</p>
+      <button
+        type="button"
+        className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white transition hover:bg-accent-hover"
+        onClick={() => triggerDownload(mediaUrl(entry.id, 'download'))}
+      >
+        Скачать
+      </button>
+    </div>
+  );
+}
+
+/** Плеер (UF-5): автозапуск, звук 80%, перемотка — сервер отдаёт Range-куски. */
 function VideoStage({
   entry,
-  videoRef,
+  mediaRef,
   onActivity,
 }: {
   entry: Entry;
-  videoRef: MutableRefObject<HTMLVideoElement | null>;
+  mediaRef: MutableRefObject<HTMLMediaElement | null>;
   onActivity: () => void;
 }) {
   const [failed, setFailed] = useState(false);
+  useAbortOnLeave(mediaRef);
 
-  useEffect(() => {
-    const video = videoRef.current;
-    return () => {
-      if (video === null) return;
-      video.pause();
-      video.removeAttribute('src');
-      video.load(); // обрывает загрузку
-    };
-  }, [videoRef]);
-
-  if (failed) {
-    return (
-      <div className="flex flex-col items-center gap-3 text-center">
-        <p className="text-sm text-zinc-300">Браузер не может воспроизвести этот формат.</p>
-        <button
-          type="button"
-          className="rounded-lg bg-accent px-4 py-1.5 text-sm font-medium text-white transition hover:bg-accent-hover"
-          onClick={() => triggerDownload(mediaUrl(entry.id, 'download'))}
-        >
-          Скачать
-        </button>
-      </div>
-    );
-  }
+  if (failed) return <CannotShow entry={entry} what="Браузер не может воспроизвести этот формат." />;
   return (
     <video
-      ref={videoRef}
+      ref={(el) => {
+        mediaRef.current = el;
+      }}
       src={mediaUrl(entry.id, 'content')}
       controls
       autoPlay
@@ -303,6 +340,204 @@ function VideoStage({
       onError={() => setFailed(true)}
       className="max-h-full max-w-full p-4"
     />
+  );
+}
+
+/**
+ * Аудио: обложка (миниатюра, если есть), имя и плеер. Автозапуск, звук 80%; доиграв -
+ * onEnded (следующий трек). Формат, который браузер не играет, - «Скачать».
+ */
+function AudioStage({
+  entry,
+  mediaRef,
+  onActivity,
+  onEnded,
+}: {
+  entry: Entry;
+  mediaRef: MutableRefObject<HTMLMediaElement | null>;
+  onActivity: () => void;
+  onEnded: () => void;
+}) {
+  const [failed, setFailed] = useState(false);
+  const [coverFailed, setCoverFailed] = useState(false);
+  useAbortOnLeave(mediaRef);
+
+  if (failed) return <CannotShow entry={entry} what="Браузер не может воспроизвести этот аудиоформат." />;
+  return (
+    <div className="flex w-full max-w-xl flex-col items-center gap-5 px-16 py-4">
+      {entry.hasThumbnail && !coverFailed ? (
+        <img
+          src={mediaUrl(entry.id, 'thumbnail')}
+          alt=""
+          draggable={false}
+          onError={() => setCoverFailed(true)}
+          className="max-h-[45vh] max-w-full rounded-lg object-contain shadow-lg"
+        />
+      ) : (
+        <div className="flex h-40 w-40 items-center justify-center rounded-2xl bg-zinc-900 text-7xl text-zinc-500">
+          ♪
+        </div>
+      )}
+      <p className="max-w-full truncate text-center text-sm text-zinc-300">{displayName(entry)}</p>
+      <audio
+        ref={(el) => {
+          mediaRef.current = el;
+        }}
+        src={mediaUrl(entry.id, 'content')}
+        controls
+        autoPlay
+        onLoadedMetadata={(e) => {
+          e.currentTarget.volume = 0.8;
+        }}
+        onTimeUpdate={onActivity}
+        onEnded={onEnded}
+        onError={() => setFailed(true)}
+        className="w-full"
+      />
+    </div>
+  );
+}
+
+/**
+ * Первые limit байт ответа потоком: тело больше лимита (сервер не понял Range) не
+ * читается целиком в память. more - за лимитом есть ещё (поток после этого отменён).
+ */
+async function readHead(res: Response, limit: number): Promise<{ bytes: Uint8Array; more: boolean }> {
+  if (res.body === null) {
+    const all = new Uint8Array(await res.arrayBuffer());
+    return { bytes: all.subarray(0, limit), more: all.length > limit };
+  }
+  const reader = res.body.getReader();
+  const out = new Uint8Array(limit);
+  let got = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return { bytes: out.subarray(0, got), more: false };
+    const take = Math.min(value.length, limit - got);
+    out.set(value.subarray(0, take), got);
+    got += take;
+    if (take < value.length) {
+      void reader.cancel().catch(() => undefined);
+      return { bytes: out.subarray(0, got), more: true };
+    }
+  }
+}
+
+type TextState =
+  | { status: 'loading' }
+  | { status: 'failed' }
+  | ({ status: 'ready'; truncated: boolean } & DecodedText);
+
+const ENCODING_LABELS: Partial<Record<string, string>> = {
+  'utf-16le': 'UTF-16',
+  'utf-16be': 'UTF-16 BE',
+  'windows-1251': 'Windows-1251',
+};
+
+/**
+ * Текстовый файл: первые TEXT_LIMIT байт (Range), кодировка - decodeText. Только текст
+ * (дочерний текст <pre>) - html/svg из сейфа не исполняются и не рисуются; заметка .md -
+ * с оформлением (MarkdownView: сырой HTML в ней не исполняется), «Исходный текст» - как есть. Область в
+ * фокусе: колесо, ↑ ↓ PgUp PgDn и пробел листают текст; ← → по-прежнему листают записи.
+ */
+function TextStage({ entry }: { entry: Entry }) {
+  const [state, setState] = useState<TextState>({ status: 'loading' });
+  const [showSource, setShowSource] = useState<boolean | null>(null); // null - по размеру заметки
+  const boxRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    const ctrl = new AbortController();
+    void (async () => {
+      try {
+        const res = await fetch(mediaUrl(entry.id, 'content'), {
+          signal: ctrl.signal,
+          headers: entry.size > TEXT_LIMIT ? { Range: `bytes=0-${TEXT_LIMIT - 1}` } : undefined,
+        });
+        if (res.status === 401) {
+          handleUnauthorized(); // сессия кончилась - на экран входа, как любой запрос
+          return;
+        }
+        if (!res.ok) throw new Error(String(res.status));
+        const { bytes, more } = await readHead(res, TEXT_LIMIT);
+        if (more) ctrl.abort(); // Range не понят (или размер записи устарел) - хвост не тянем
+        const truncated = more || bytes.length < entry.size;
+        setState({ status: 'ready', truncated, ...decodeText(bytes, truncated) });
+      } catch {
+        if (!ctrl.signal.aborted) setState({ status: 'failed' });
+      }
+    })();
+    return () => ctrl.abort(); // ушли с записи - запрос обрывается (аренда сессии)
+  }, [entry.id, entry.size]);
+
+  const ready = state.status === 'ready' && !state.binary;
+  useEffect(() => {
+    // текст загрузился, пока пишут описание или тег, - фокус у поля не отнимается
+    // (иначе Delete и стрелки ушли бы просмотрщику)
+    if (ready && !isTypingTarget(document.activeElement)) boxRef.current?.focus({ preventScroll: true });
+  }, [ready]);
+
+  if (state.status === 'loading') return <p className="text-sm text-zinc-500">Загрузка…</p>;
+  if (state.status === 'failed') return <CannotShow entry={entry} what="Не удалось загрузить файл." />;
+  if (state.binary) return <CannotShow entry={entry} what="Это не текст: в файле двоичные данные." />;
+
+  const encoding = ENCODING_LABELS[state.encoding];
+  const markdown = isMarkdown(entry);
+  // заметка - с оформлением; огромная - исходником (переключатель - в строке над текстом)
+  const source = !markdown || (showSource ?? state.text.length > MARKDOWN_RENDER_LIMIT);
+  return (
+    <div className="flex h-full w-full flex-col items-center px-16 pb-4 pt-1">
+      {(state.truncated || encoding !== undefined || markdown) && (
+        <div className="mb-2 flex w-full max-w-4xl items-center gap-3 text-xs text-zinc-500">
+          {markdown && (
+            <button
+              type="button"
+              className="rounded px-2 py-0.5 text-zinc-300 transition hover:bg-zinc-800"
+              onClick={() => {
+                setShowSource(!source);
+                boxRef.current?.focus({ preventScroll: true }); // пробел и стрелки - снова тексту
+              }}
+            >
+              {source ? 'Оформление' : 'Исходный текст'}
+            </button>
+          )}
+          {encoding !== undefined && <span>Кодировка: {encoding}</span>}
+          {state.truncated && (
+            <>
+              <span>
+                Показано начало: {formatBytes(TEXT_LIMIT)} из {formatBytes(entry.size)}
+              </span>
+              <button
+                type="button"
+                className="rounded px-2 py-0.5 text-zinc-300 transition hover:bg-zinc-800"
+                onClick={() => triggerDownload(mediaUrl(entry.id, 'download'))}
+              >
+                Скачать целиком
+              </button>
+            </>
+          )}
+        </div>
+      )}
+      <div
+        ref={boxRef}
+        tabIndex={0}
+        aria-label="Текст файла"
+        className="min-h-0 w-full max-w-4xl flex-1 overflow-auto rounded-lg bg-zinc-900 px-6 py-5 outline-none focus-visible:ring-1 focus-visible:ring-zinc-700"
+      >
+        {source ? (
+          <pre
+            className={`whitespace-pre-wrap break-words text-zinc-200 ${
+              isProse(entry) ? 'font-sans text-[15px] leading-relaxed' : 'font-mono text-[13px] leading-snug'
+            }`}
+          >
+            {state.text}
+          </pre>
+        ) : (
+          <Suspense fallback={<p className="text-sm text-zinc-500">Загрузка…</p>}>
+            <MarkdownView text={state.text} />
+          </Suspense>
+        )}
+      </div>
+    </div>
   );
 }
 

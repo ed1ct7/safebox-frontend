@@ -280,7 +280,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   // ── Действия ──────────────────────────────────────────────────────────────
 
-  // просмотрщик листает фото, видео и ролики текущего вида
+  // просмотрщик листает фото, видео, аудио, тексты и ролики текущего вида
   const viewMedia = useEvent((entry: Entry) => {
     const items = entries.filter(isViewable);
     const index = Math.max(0, items.findIndex((e) => e.id === entry.id));
@@ -302,6 +302,11 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         else setViewer({ kind: 'link', entry });
         break;
       default: {
+        // аудио и текстовые файлы открываются в просмотрщике, прочие файлы скачиваются
+        if (isViewable(entry)) {
+          viewMedia(entry);
+          break;
+        }
         const url = downloadUrlOf(entry);
         if (url !== null) triggerDownload(url);
       }
@@ -761,7 +766,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       const entry = entries.find((en) => en.id === first);
       if (entry !== undefined) openEntry(entry);
     } else if (e.key === ' ' && !ctrl) {
-      // пробел - быстрый просмотр выделенного фото, видео или ролика (пробел в просмотре закрывает)
+      // пробел - быстрый просмотр выделенного фото, видео, аудио, текста или ролика (на фото пробел в просмотре закрывает)
       if (e.repeat || isInteractiveTarget(e.target) || selected.size !== 1) return;
       const entry = entries.find((en) => en.id === first);
       if (entry === undefined || !isViewable(entry)) return;
