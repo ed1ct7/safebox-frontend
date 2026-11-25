@@ -32,6 +32,8 @@ let scroller: HTMLElement | null = null;
 let viewH = 800;
 let cardH = 200;
 let resized: (() => void) | null = null; // колбэк ResizeObserver: «окно поменяло размер»
+/** высота карточки от раскладки (по умолчанию - cardH) */
+let cardHeight: (() => number) | null = null;
 
 beforeEach(() => {
   viewH = 800;
@@ -55,7 +57,7 @@ beforeEach(() => {
   // сетка уезжает вверх вместе с прокруткой, вид стоит на месте (как в браузере)
   vi.spyOn(HTMLElement.prototype, 'getBoundingClientRect').mockImplementation(function (this: HTMLElement) {
     const top = this.parentElement === scroller && scroller !== null ? -scroller.scrollTop : 0;
-    const height = this.dataset.entryId !== undefined ? cardH : 0;
+    const height = this.dataset.entryId !== undefined ? (cardHeight?.() ?? cardH) : 0;
     return { top, left: 0, width: 900, height, right: 900, bottom: top + height, x: 0, y: top, toJSON: () => ({}) } as DOMRect;
   });
 });
@@ -65,6 +67,7 @@ afterEach(() => {
   vi.restoreAllMocks();
   scroller = null;
   resized = null;
+  cardHeight = null;
 });
 
 function renderGallery(list: DisplayItem[], total = list.length, renamingId: number | null = null) {
@@ -158,6 +161,16 @@ describe('Gallery: виртуальная сетка', () => {
     viewH = 2000;
     act(() => resized?.());
     expect(ids()).toContain(60); // строка 11 (2000/212 ≈ 9,4 видимых + запас)
+  });
+
+  it('сетка на границе высоты вида: полоса прокрутки меняет высоту карточек - без бесконечного цикла', () => {
+    // сетка выше 850 - у вида полоса, карточки уже и ниже (200); без полосы - 210.
+    // Было: 210 → сетка 876 → полоса → 200 → 836 → полосы нет → 210 → … (React #185)
+    cardHeight = () => (parseFloat((scroller?.firstElementChild as HTMLElement | null)?.style.height ?? '0') > 850 ? 200 : 210);
+    const { ids, container } = renderGallery(items(20));
+    expect(ids()).toHaveLength(20);
+    // при качелях остаётся большая высота: 4 строки по 210 + 12
+    expect(container.querySelector<HTMLElement>('main > [data-gallery]')?.style.height).toBe(`${4 * 222 - 12}px`);
   });
 
   it('карточки стали выше (поздняя страница с тегами) - вид остаётся на той же карточке', () => {

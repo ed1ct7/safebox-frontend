@@ -189,12 +189,29 @@ export function Gallery({
   useLayoutEffect(() => sync(), [sync, virtual, g, count, viewH]);
 
   // высота карточки - по нарисованной (не той, что сейчас переименовывается)
+  // Замер может раскачаться: высота сетки → полоса прокрутки вида → ширина карточек →
+  // их высота (картинка 4:3) → высота сетки… Каждый setCardH здесь синхронный, и на
+  // границе («сетка чуть выше вида») это бесконечный цикл - React #185, чёрный экран.
+  // Поэтому в пределах кадра после первой правки высота только растёт: при качелях
+  // остаётся большая (строки чуть свободнее, карточки не налезают друг на друга).
+  // Сам вид держит место под полосу (scrollbar-gutter в MainShell) - это защита на
+  // случай других причин.
+  const settling = useRef(false);
   useLayoutEffect(() => {
     if (!virtual) return;
     // дробная высота (картинка 4:3 от дробной ширины): по округлённой строки поползли бы
     const card = innerRef.current?.querySelector<HTMLElement>('[data-entry-id]:not([data-renaming])');
     const h = card?.getBoundingClientRect().height ?? 0;
-    if (h > 0 && Math.abs(h - cardH) > 0.5) setCardH(h);
+    if (h <= 0 || Math.abs(h - cardH) <= 0.5) return;
+    if (settling.current) {
+      if (h < cardH) return;
+    } else {
+      settling.current = true;
+      requestAnimationFrame(() => {
+        settling.current = false;
+      });
+    }
+    setCardH(h);
   });
 
   // ручки для окна: стрелки, прокрутка к карточке, рамка

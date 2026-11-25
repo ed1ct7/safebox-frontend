@@ -1023,7 +1023,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
           {isFilter && <FilterBar filter={filter} folderId={folderId} onChange={changeFilter} />}
           <main
             ref={mainRef}
-            className={`min-h-0 flex-1 overflow-y-auto p-4 pb-20 ${rubber.box !== null ? 'select-none' : ''}`}
+            // место под полосу прокрутки занято всегда: иначе её появление сужает
+            // карточки, они становятся ниже, сетка - короче, полоса пропадает… (Gallery)
+            className={`min-h-0 flex-1 overflow-y-auto p-4 pb-20 [scrollbar-gutter:stable] ${rubber.box !== null ? 'select-none' : ''}`}
             onPointerDown={rubber.onPointerDown}
             onClick={(e) => {
               if (rubber.justCommitted.current) {
