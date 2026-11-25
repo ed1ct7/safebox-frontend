@@ -5,6 +5,7 @@ import {
   attachmentsZipUrlOf,
   deleteEntries,
   downloadUrlOf,
+  getEntry,
   lockSafe,
   refreshPreview,
   restoreFromTrash,
@@ -37,6 +38,7 @@ import { isNavKey } from '../lib/selection';
 import { EMPTY_FILTER, filterSummary, isFilterActive, pruneFilterTags, searchOptionsFor } from '../lib/tagFilter';
 import type { TagFilter } from '../lib/tagFilter';
 import { pathNames } from '../lib/tags';
+import { isTable } from '../lib/table';
 import { folderAfterDelete } from '../lib/tree';
 import { planSuffixRename } from '../lib/uniqueNames';
 import type { NameChange } from '../lib/uniqueNames';
@@ -67,10 +69,13 @@ import { LinkConfirm } from './LinkConfirm';
 import { isViewable, MediaViewer } from './MediaViewer';
 import { anyModalOpen } from './Modal';
 import { MoveDialog } from './MoveDialog';
+import { NewTableDialog } from './NewTableDialog';
 import { PropertiesPanel } from './PropertiesPanel';
 import type { PropertiesTarget } from './PropertiesPanel';
 import { SelectionBar } from './SelectionBar';
 import { StatusBar } from './StatusBar';
+import { TableView } from './TableView';
+import type { TableViewHandle } from './TableView';
 import { FilterPanel } from './TagFilter';
 import { TagSidebar } from './TagSidebar';
 import { TagsScreen } from './TagsScreen';
@@ -84,7 +89,8 @@ const NO_FRESH: ReadonlySet<number> = new Set();
 
 type Viewer =
   | { kind: 'media'; items: Entry[]; index: number } // фото, видео, ролики YouTube
-  | { kind: 'link'; entry: Entry };
+  | { kind: 'link'; entry: Entry }
+  | { kind: 'table'; entry: Entry }; // файл-таблица: открывается на весь экран
 
 /** Главное окно: слева дерево и свойства записи, сверху крошки и поиск, в центре
  * сетка карточек, справа - панель фильтра по тегам. */
@@ -218,6 +224,8 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const hoveredId = useRef<number | null>(null); // только для F2 — без перерисовок
   const [menu, setMenu] = useState<ContextMenuState | null>(null);
   const [viewer, setViewer] = useState<Viewer | null>(null);
+  const [newTable, setNewTable] = useState(false);
+  const tableRef = useRef<TableViewHandle | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [propsOpen, setPropsOpen] = useState(false);
   const [moveTargets, setMoveTargets] = useState<Entry[] | null>(null);
@@ -302,6 +310,10 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         else setViewer({ kind: 'link', entry });
         break;
       default: {
+        if (isTable(entry)) {
+          setViewer({ kind: 'table', entry });
+          break;
+        }
         // аудио и текстовые файлы открываются в просмотрщике, прочие файлы скачиваются
         if (isViewable(entry)) {
           viewMedia(entry);
@@ -459,7 +471,26 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     });
   });
 
+  // новая таблица сразу открывается: создали - и можно писать
+  const openNewTable = useEvent(async (id: number | null) => {
+    refreshContent();
+    if (id === null) {
+      toast('Таблица создана', 'success');
+      return;
+    }
+    try {
+      setViewer({ kind: 'table', entry: await getEntry(id) });
+    } catch {
+      // не прочиталась - карточка уже в папке, откроется оттуда
+    }
+  });
+
   const lock = useEvent(async () => {
+    // открытая таблица: сначала дописать правки - после блокировки писать будет некуда
+    if (tableRef.current !== null && !(await tableRef.current.saveNow())) {
+      toast('Таблица не сохранена — сейф не заблокирован. Закройте таблицу и повторите', 'error');
+      return;
+    }
     setViewer(null); // закрыть видео: его Range-поток держит аренду сессии
     importer.cancelAll();
     try {
@@ -907,6 +938,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         onWatchFolder={() => void watch.enable()}
         onAddLink={(url) => void links.addLinks([url], folderId)}
         onImportBookmarks={(file) => void links.importBookmarks(file, folderId)}
+        onNewTable={() => setNewTable(true)}
         onLock={() => void lock()}
         safe={safe}
       />
@@ -1091,6 +1123,22 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         />
       )}
       {viewer?.kind === 'link' && <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />}
+      {viewer?.kind === 'table' && (
+        <TableView
+          key={viewer.entry.id}
+          entry={viewer.entry}
+          handleRef={tableRef}
+          onClose={() => setViewer(null)}
+          onSaved={(fresh) => patchCachedEntries(qc, [fresh])}
+        />
+      )}
+      {newTable && (
+        <NewTableDialog
+          parentId={folderId}
+          onClose={() => setNewTable(false)}
+          onCreated={(id) => void openNewTable(id)}
+        />
+      )}
 
       {confirm !== null && <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />}
 

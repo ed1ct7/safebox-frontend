@@ -90,6 +90,8 @@ export interface ImportResult {
   skipped: number;
   failed: number;
   failures: { path: string; message: string }[];
+  /** что записано: путь из запроса -> id записи (сервер Ф3+; у замены - id прежней записи) */
+  importedFiles?: { path: string; id: number }[];
 }
 
 export interface Tag {
@@ -218,7 +220,15 @@ export interface ImportPlanResponse {
 
 /** Первая часть multipart-импорта: lastModified файла и решение по совпадению имени. */
 export interface ImportManifest {
-  files: Record<string, { lastModified?: number; onConflict?: ConflictPolicy }>;
+  files: Record<
+    string,
+    {
+      lastModified?: number;
+      onConflict?: ConflictPolicy;
+      /** то же содержимое уже есть в сейфе: skip (по умолчанию) - не писать, import - писать */
+      onDuplicate?: 'skip' | 'import';
+    }
+  >;
 }
 
 export type TagMatch = 'categories' | 'all' | 'any';

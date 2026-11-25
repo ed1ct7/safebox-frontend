@@ -29,6 +29,7 @@ export interface TopBarProps {
   onWatchFolder: () => void;
   onAddLink: (url: string) => void;
   onImportBookmarks: (file: File) => void;
+  onNewTable: () => void;
   onLock: () => void;
   safe: SafeInfo | undefined;
 }
@@ -107,6 +108,14 @@ export function TopBar(props: TopBarProps) {
         onClick={props.onToggleTags}
       >
         🏷 Теги
+      </button>
+      <button
+        type="button"
+        className={toolButton}
+        title="Новая таблица в этой папке: пароли, карты, любые списки"
+        onClick={props.onNewTable}
+      >
+        ▦ Таблица
       </button>
       <ImportMenu
         onImportFiles={props.onImportFiles}

@@ -7,6 +7,7 @@ import { useThumbnailSrc } from '../hooks/useThumbnailSrc';
 import { isAudio } from '../lib/fileView';
 import { firstLine, formatBytes } from '../lib/format';
 import { displayName } from '../lib/link';
+import { isTable } from '../lib/table';
 import { cardTagChips } from '../lib/tags';
 import { NameEditor } from './NameEditor';
 
@@ -18,8 +19,9 @@ export const GLYPHS: Record<EntryKind, string> = {
   file: '📄',
 };
 
-/** Значок записи: у аудиофайла - нота (вида записи «аудио» нет, это файл). */
+/** Значок записи: у аудиофайла - нота, у таблицы - сетка (своих видов записи у них нет, это файлы). */
 export function glyphOf(entry: Entry): string {
+  if (isTable(entry)) return '▦';
   return isAudio(entry) ? '🎵' : GLYPHS[entry.kind];
 }
 
@@ -31,8 +33,15 @@ export const KIND_LABELS: Record<EntryKind, string> = {
   file: 'Файл',
 };
 
+/** Подпись вида записи: «Таблица» и «Аудио» - по файлу, остальное - по виду. */
+export function kindLabelOf(entry: Entry): string {
+  if (isTable(entry)) return 'Таблица';
+  return isAudio(entry) ? 'Аудио' : KIND_LABELS[entry.kind];
+}
+
 function captionOf(entry: Entry): string {
   if (entry.kind === 'folder') return 'Папка';
+  if (isTable(entry)) return 'Таблица';
   if (entry.kind === 'link') return entry.domain ?? '';
   return formatBytes(entry.size);
 }
@@ -173,7 +182,7 @@ export const EntryCard = memo(function EntryCard({
 
       <span
         className="absolute right-2 top-2 z-10 rounded bg-black/60 px-1.5 py-0.5 text-[11px] leading-none"
-        title={isAudio(entry) ? 'Аудио' : KIND_LABELS[entry.kind]}
+        title={kindLabelOf(entry)}
       >
         {glyphOf(entry)}
       </span>

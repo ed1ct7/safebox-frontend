@@ -5,7 +5,8 @@ import { formatBytes, formatDateTime, plural } from '../lib/format';
 import { displayName } from '../lib/link';
 import { validateDescription, validateEntryName, validateLinkUrl } from '../lib/rules';
 import { EditableField } from './EditableField';
-import { glyphOf, KIND_LABELS } from './EntryCard';
+import { isTable } from '../lib/table';
+import { glyphOf, kindLabelOf } from './EntryCard';
 import { TagsSection } from './TagsSection';
 
 /** Что показывает панель: выделенные записи или, если выделения нет, открытая папка. */
@@ -66,7 +67,9 @@ function EntryDetails({
 }) {
   const isLink = entry.kind === 'link';
   const save = (patch: EntryPatch) => onSave(entry.id, patch);
-  const kind = entry.mime === '' ? KIND_LABELS[entry.kind] : `${KIND_LABELS[entry.kind]} · ${entry.mime}`;
+  const label = kindLabelOf(entry);
+  // у таблицы тип файла (octet-stream) ничего не говорит
+  const kind = entry.mime === '' || isTable(entry) ? label : `${label} · ${entry.mime}`;
 
   return (
     <div className="flex flex-col gap-4">
