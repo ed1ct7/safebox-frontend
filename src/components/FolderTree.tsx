@@ -1,4 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
+import type { MouseEvent } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { foldersQuery } from '../api/queries';
 import { useEntryDrop } from '../hooks/useEntryDrop';
@@ -9,6 +10,14 @@ import type { TreeNode } from '../lib/tree';
 export interface TreeDrop {
   canDrop: (target: number | null) => boolean;
   onDrop: (target: number | null) => void;
+}
+
+/** Правый клик по узлу (null - «Все объекты»), цифра «Места» у папки, подсветка узла под меню. */
+export interface TreeExtras {
+  onContextMenu?: (e: MouseEvent, id: number | null) => void;
+  placeOf?: (id: number) => number | undefined;
+  /** у какого узла открыто меню (undefined - ни у какого) */
+  menuFor?: number | null;
 }
 
 const rowClass = (active: boolean, over = false) =>
@@ -28,6 +37,7 @@ function TreeRow({
   onToggle,
   onNavigate,
   dnd,
+  extra,
 }: {
   node: TreeNode;
   depth: number;
@@ -36,13 +46,20 @@ function TreeRow({
   onToggle: (id: number) => void;
   onNavigate: (id: number) => void;
   dnd: TreeDrop | undefined;
+  extra: TreeExtras;
 }) {
+  const digit = extra.placeOf?.(node.id);
   const drop = useEntryDrop(
     () => dnd?.canDrop(node.id) ?? false,
     () => dnd?.onDrop(node.id),
   );
   return (
-    <div className={rowClass(active, drop.over)} style={{ paddingLeft: depth * 12 }} {...drop.props}>
+    <div
+      className={rowClass(active, drop.over || extra.menuFor === node.id)}
+      style={{ paddingLeft: depth * 12 }}
+      onContextMenu={(e) => extra.onContextMenu?.(e, node.id)}
+      {...drop.props}
+    >
       {node.children.length > 0 ? (
         <button
           type="button"
@@ -65,6 +82,14 @@ function TreeRow({
       >
         📁 {node.name}
       </button>
+      {digit !== undefined && (
+        <span
+          className="ml-1 shrink-0 rounded bg-zinc-800 px-1 text-[10px] tabular-nums leading-4 text-zinc-400"
+          title={`Место ${digit}: цифра ${digit} перемещает сюда`}
+        >
+          {digit}
+        </span>
+      )}
     </div>
   );
 }
@@ -77,6 +102,7 @@ function Nodes({
   onToggle,
   onNavigate,
   dnd,
+  extra,
 }: {
   nodes: TreeNode[];
   depth: number;
@@ -85,6 +111,7 @@ function Nodes({
   onToggle: (id: number) => void;
   onNavigate: (id: number) => void;
   dnd: TreeDrop | undefined;
+  extra: TreeExtras;
 }) {
   return (
     <ul>
@@ -100,6 +127,7 @@ function Nodes({
               onToggle={onToggle}
               onNavigate={onNavigate}
               dnd={dnd}
+              extra={extra}
             />
             {n.children.length > 0 && open && (
               <Nodes
@@ -110,6 +138,7 @@ function Nodes({
                 onToggle={onToggle}
                 onNavigate={onNavigate}
                 dnd={dnd}
+                extra={extra}
               />
             )}
           </li>
@@ -123,10 +152,12 @@ function RootRow({
   active,
   onNavigate,
   dnd,
+  extra,
 }: {
   active: boolean;
   onNavigate: (id: null) => void;
   dnd: TreeDrop | undefined;
+  extra: TreeExtras;
 }) {
   const drop = useEntryDrop(
     () => dnd?.canDrop(null) ?? false,
@@ -135,9 +166,10 @@ function RootRow({
   return (
     <button
       type="button"
-      className={`${rowClass(active, drop.over)} px-2`}
+      className={`${rowClass(active, drop.over || extra.menuFor === null)} px-2`}
       aria-current={active ? 'page' : undefined}
       onClick={() => onNavigate(null)}
+      onContextMenu={(e) => extra.onContextMenu?.(e, null)}
       {...drop.props}
     >
       🗄 Все объекты
@@ -156,12 +188,16 @@ export function FolderTree({
   expandPath,
   onNavigate,
   dnd,
+  onContextMenu,
+  placeOf,
+  menuFor,
 }: {
   current: number | null | undefined;
   expandPath?: readonly number[];
   onNavigate: (id: number | null) => void;
   dnd?: TreeDrop;
-}) {
+} & TreeExtras) {
+  const extra = useMemo<TreeExtras>(() => ({ onContextMenu, placeOf, menuFor }), [onContextMenu, placeOf, menuFor]);
   const query = useQuery(foldersQuery);
   const folders = useMemo(() => query.data?.folders ?? [], [query.data]);
   const tree = useMemo(() => buildTree(folders), [folders]);
@@ -185,7 +221,7 @@ export function FolderTree({
 
   return (
     <nav aria-label="Папки" className="flex flex-col gap-0.5 px-2">
-      <RootRow active={current === null} onNavigate={onNavigate} dnd={dnd} />
+      <RootRow active={current === null} onNavigate={onNavigate} dnd={dnd} extra={extra} />
       {query.isPending && <div className="px-2 py-1 text-xs text-zinc-600">Загрузка…</div>}
       {query.isError && <div className="px-2 py-1 text-xs text-red-400">Не удалось загрузить папки</div>}
       <Nodes
@@ -196,6 +232,7 @@ export function FolderTree({
         onToggle={toggle}
         onNavigate={onNavigate}
         dnd={dnd}
+        extra={extra}
       />
     </nav>
   );

@@ -145,6 +145,7 @@ async function menuAction(card: string, item: string | RegExp): Promise<void> {
 }
 
 beforeEach(() => {
+  localStorage.clear(); // «Места» и недавние папки - из прошлого теста не тянутся
   setToken('t');
   installServer();
   mocks.importEntries.mockReset();
@@ -210,9 +211,8 @@ describe('перемещение (UF-14)', () => {
     await renderShell();
     await menuAction('кот.jpg', 'Переместить…');
     const dialog = await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
-    fireEvent.click(within(dialog).getByRole('button', { name: /Папка/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Переместить' }));
-    expect(await screen.findByText('Перемещено: 1')).toBeInTheDocument();
+    fireEvent.click(within(dialog).getByRole('option', { name: /📁 Папка/ }));
+    expect(await screen.findByText(/Перемещено: 1/)).toBeInTheDocument();
     expect(callsTo('POST', '/api/v1/entries/move/plan')[0]?.body).toEqual({ ids: [1], parentId: 3 });
     expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [1], parentId: 3 });
   });
@@ -224,8 +224,7 @@ describe('перемещение (UF-14)', () => {
     const bar = screen.getByRole('toolbar', { name: 'Действия с выделенным' });
     fireEvent.click(within(bar).getByRole('button', { name: 'Переместить…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Переместить 2 объекта' });
-    fireEvent.click(within(dialog).getByRole('button', { name: /Папка/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Переместить' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: /📁 Папка/ }));
     await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
     expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [1, 2], parentId: 3 });
   });
@@ -251,8 +250,7 @@ describe('перемещение (UF-14)', () => {
     const bar = screen.getByRole('toolbar', { name: 'Действия с выделенным' });
     await user.click(within(bar).getByRole('button', { name: 'Переместить…' }));
     const dialog = await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
-    await user.click(within(dialog).getByRole('button', { name: /Папка/ }));
-    await user.click(within(dialog).getByRole('button', { name: 'Переместить' }));
+    await user.click(within(dialog).getByRole('option', { name: /📁 Папка/ }));
     const conflict = await screen.findByRole('dialog', { name: /В папке уже есть/ });
     await user.click(within(conflict).getByRole('button', { name: 'Оставить оба' }));
     await waitFor(() => expect(callsTo('PATCH', '/api/v1/entries/40')).toHaveLength(1));
@@ -269,8 +267,7 @@ describe('перемещение (UF-14)', () => {
     await renderShell();
     await menuAction('кот.jpg', 'Переместить…');
     const dialog = await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
-    fireEvent.click(within(dialog).getByRole('button', { name: /Папка/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Переместить' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: /📁 Папка/ }));
     const conflict = await screen.findByRole('dialog', { name: 'В папке уже есть 1 запись с таким же именем' });
     fireEvent.click(within(conflict).getByRole('button', { name: 'Заменить' }));
     await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
@@ -289,8 +286,7 @@ describe('перемещение (UF-14)', () => {
     await renderShell();
     await menuAction('кот.jpg', 'Переместить…');
     const dialog = await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
-    fireEvent.click(within(dialog).getByRole('button', { name: /Папка/ }));
-    fireEvent.click(within(dialog).getByRole('button', { name: 'Переместить' }));
+    fireEvent.click(within(dialog).getByRole('option', { name: /📁 Папка/ }));
     expect(await screen.findByText('Нельзя переместить запись в саму себя')).toBeInTheDocument();
     expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(0);
   });
@@ -301,7 +297,7 @@ describe('перемещение (UF-14)', () => {
     fireEvent.dragStart(cardOf('кот.jpg'), { dataTransfer: dt });
     fireEvent.dragOver(cardOf('Папка'), { dataTransfer: dt });
     fireEvent.drop(cardOf('Папка'), { dataTransfer: dt });
-    expect(await screen.findByText('Перемещено: 1')).toBeInTheDocument();
+    expect(await screen.findByText(/Перемещено: 1/)).toBeInTheDocument();
     expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [1], parentId: 3 });
   });
 
@@ -314,6 +310,126 @@ describe('перемещение (UF-14)', () => {
     fireEvent.drop(node, { dataTransfer: dt });
     await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
     expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [2], parentId: 3 });
+  });
+});
+
+describe('«Места», палитра и меню дерева', () => {
+  const treeNode = async (name: RegExp) => {
+    const tree = await screen.findByRole('navigation', { name: 'Папки' });
+    return { tree, node: await within(tree).findByRole('button', { name }) };
+  };
+
+  it('правый клик в дереве - «Добавить в «Места»», цифра 1 перемещает выделенное, Ctrl+Z возвращает', async () => {
+    const { user } = await renderShell();
+    const { tree, node } = await treeNode(/Папка/);
+    fireEvent.contextMenu(node);
+    fireEvent.click(await screen.findByRole('menuitem', { name: /Добавить в «Места»/ }));
+    expect(await screen.findByText(/место 1/)).toBeInTheDocument();
+    expect(within(tree).getByTitle(/Место 1/)).toBeInTheDocument();
+    expect(JSON.parse(localStorage.getItem('sbx_places') ?? 'null')).toEqual([3]);
+
+    await pick(user, 'кот.jpg');
+    await user.keyboard('1');
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
+    expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [1], parentId: 3 });
+    expect(await screen.findByText('Перемещено: 1 → «Папка»')).toBeInTheDocument();
+
+    await user.keyboard('{Control>}z{/Control}');
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(2));
+    expect(callsTo('POST', '/api/v1/entries/move')[1]?.body).toEqual({ ids: [1], parentId: null });
+    expect(await screen.findByText(/Возвращено на место: 1/)).toBeInTheDocument();
+  });
+
+  it('свободная цифра ничего не делает', async () => {
+    const { user } = await renderShell();
+    await pick(user, 'кот.jpg');
+    await user.keyboard('5');
+    expect(callsTo('POST', '/api/v1/entries/move/plan')).toHaveLength(0);
+  });
+
+  it('M - палитра для выделенного: ввод, Enter перемещает, «Отменить» в тосте возвращает', async () => {
+    const { user } = await renderShell();
+    await pick(user, 'кот.jpg');
+    await user.keyboard('m');
+    await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
+    await user.keyboard('пап{Enter}');
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
+    expect(screen.queryByRole('dialog', { name: /Переместить/ })).toBeNull();
+    expect(JSON.parse(localStorage.getItem('sbx_move_recent') ?? 'null')).toEqual([3]);
+    await user.click(await screen.findByRole('button', { name: 'Отменить' }));
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(2));
+    expect(callsTo('POST', '/api/v1/entries/move')[1]?.body).toEqual({ ids: [1], parentId: null });
+  });
+
+  it('палитра: новой папки нет - создаётся по пути и туда перемещается', async () => {
+    overrides['POST /api/v1/folders'] = () => ({ json: { ids: [7] } });
+    const { user } = await renderShell();
+    await menuAction('кот.jpg', 'Переместить…');
+    await screen.findByRole('dialog', { name: 'Переместить «кот.jpg»' });
+    await user.keyboard('Новая/Под');
+    await user.click(screen.getByRole('option', { name: /Создать папку «Новая \/ Под»/ }));
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
+    expect(callsTo('POST', '/api/v1/folders')[0]?.body).toEqual({ parentId: null, paths: ['Новая/Под'] });
+    expect(callsTo('POST', '/api/v1/entries/move')[0]?.body).toEqual({ ids: [1], parentId: 7 });
+    expect(await screen.findByText('Перемещено: 1 → «Новая / Под»')).toBeInTheDocument();
+  });
+
+  it('просмотрщик: цифра места перемещает показанное и открывает следующее', async () => {
+    localStorage.setItem('sbx_places', JSON.stringify([3]));
+    const { user } = await renderShell();
+    fireEvent.doubleClick(cardOf('кот.jpg'));
+    const viewer = await screen.findByRole('dialog', { name: 'Просмотр фото' });
+    expect(within(viewer).getByRole('button', { name: /1 Папка/ })).toBeInTheDocument();
+    await user.keyboard('1');
+    await waitFor(() => expect(callsTo('POST', '/api/v1/entries/move')).toHaveLength(1));
+    // единственное фото ушло - просмотр закрылся
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Просмотр фото' })).toBeNull());
+  });
+
+  it('меню «Все объекты» - новая папка в корне', async () => {
+    overrides['POST /api/v1/folders'] = () => ({ json: { ids: [8] } });
+    const { user } = await renderShell();
+    const { node } = await treeNode(/Все объекты/);
+    fireEvent.contextMenu(node);
+    expect(screen.getAllByRole('menuitem').map((i) => i.textContent)).toEqual(['Новая папка…']);
+    fireEvent.click(screen.getByRole('menuitem', { name: 'Новая папка…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Новая папка' });
+    await user.type(within(dialog).getByRole('textbox', { name: 'Имя' }), 'Коты{Enter}');
+    await waitFor(() => expect(callsTo('POST', '/api/v1/folders')).toHaveLength(1));
+    expect(callsTo('POST', '/api/v1/folders')[0]?.body).toEqual({ parentId: null, paths: ['Коты'] });
+    expect(await screen.findByText('Папка «Коты» создана')).toBeInTheDocument();
+  });
+
+  it('меню папки: «Переименовать…» - PATCH с новым именем, ошибка остаётся в диалоге', async () => {
+    let calls = 0;
+    overrides['PATCH /api/v1/entries/3'] = (c) => {
+      calls += 1;
+      return calls === 1
+        ? { status: 409, json: { error: { code: 'conflict', message: 'Такое имя уже есть' } } }
+        : { json: { ...folder, ...(c.body as object) } };
+    };
+    const { user } = await renderShell();
+    const { node } = await treeNode(/Папка/);
+    fireEvent.contextMenu(node);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Переименовать…' }));
+    const dialog = await screen.findByRole('dialog', { name: 'Переименовать папку' });
+    const input = within(dialog).getByRole('textbox', { name: 'Имя' });
+    expect(input).toHaveValue('Папка');
+    await user.clear(input);
+    await user.type(input, 'Коты{Enter}');
+    expect(await within(dialog).findByText('Такое имя уже есть')).toBeInTheDocument();
+    await user.click(within(dialog).getByRole('button', { name: 'Переименовать' }));
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: 'Переименовать папку' })).toBeNull());
+    expect(callsTo('PATCH', '/api/v1/entries/3')[1]?.body).toEqual({ name: 'Коты' });
+  });
+
+  it('меню папки: «Переместить…» открывает палитру для самой папки', async () => {
+    overrides['GET /api/v1/entries/3'] = () => ({ json: folder });
+    await renderShell();
+    const { node } = await treeNode(/Папка/);
+    fireEvent.contextMenu(node);
+    fireEvent.click(await screen.findByRole('menuitem', { name: 'Переместить…' }));
+    expect(await screen.findByRole('dialog', { name: 'Переместить «Папка»' })).toBeInTheDocument();
   });
 });
 

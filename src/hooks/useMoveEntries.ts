@@ -1,7 +1,7 @@
 import { useCallback } from 'react';
 import { listEntries, moveEntries, planMove, updateEntry } from '../api/endpoints';
 import { errorMessage, isUnauthorized } from '../api/client';
-import type { ConflictPolicy, Entry, MoveConflict } from '../api/types';
+import type { ConflictPolicy, Entry, MoveConflict, MoveResult } from '../api/types';
 import { useToast } from '../components/Toasts';
 import { moveConflictItems, resolutionsToRecord } from '../lib/conflicts';
 import { foldForSearch } from '../lib/fold';
@@ -48,6 +48,22 @@ async function renameExistingAside(
   return true;
 }
 
+/** label - куда («Мемы / Коты») для тоста, undo - кнопка «Отменить» в нём. */
+export interface MoveOptions {
+  label?: string;
+  undo?: () => void;
+}
+
+/** Диалог поверх полноэкранного видео не виден: сначала выходим из полного экрана. */
+async function leaveFullscreen(): Promise<void> {
+  if (document.fullscreenElement === null || document.fullscreenElement === undefined) return;
+  try {
+    await document.exitFullscreen();
+  } catch {
+    // уже вышли
+  }
+}
+
 /**
  * Перемещение записей к новому родителю - папке, «Все объекты» или записи, у
  * которой они станут вложениями (UF-14). Сначала план: занятые имена решает
@@ -55,7 +71,8 @@ async function renameExistingAside(
  * меняется); «Оставить оба» переименовывает лежащие в папке («имя (2)»…) и
  * спрашивает план заново; «в себя/потомка» сервер отклоняет 422 - причина
  * уходит тостом. onDone(moved) вызывается всегда: список пора обновить,
- * выделение - снять, если moved.
+ * выделение - снять, если moved. Результат - что сделал сервер (null - отменили
+ * или ошибка).
  */
 export function useMoveEntries({
   askConflicts,
@@ -69,7 +86,7 @@ export function useMoveEntries({
   const done = useEvent(onDone);
 
   return useCallback(
-    async (moving: Entry[], parentId: number | null): Promise<void> => {
+    async (moving: Entry[], parentId: number | null, opts: MoveOptions = {}): Promise<MoveResult | null> => {
       const ids = moving.map((e) => e.id);
       let moved = false;
       try {
@@ -77,28 +94,37 @@ export function useMoveEntries({
         for (let round = 0; ; round += 1) {
           const plan = await planMove(ids, parentId);
           if (plan.conflicts.length === 0) break;
+          await leaveFullscreen();
           const answer = await ask({
             kind: 'move',
             items: moveConflictItems(plan.conflicts, moving),
           });
-          if (answer === null) return;
+          if (answer === null) return null;
           if (answer !== 'rename-existing') {
             resolutions = resolutionsToRecord(answer);
             break;
           }
           if (round >= RENAME_ROUNDS) {
             toast('Слишком много совпадений имён — разрешите их по одному', 'error');
-            return;
+            return null;
           }
-          if (!(await renameExistingAside(plan.conflicts, parentId, toast))) return;
+          if (!(await renameExistingAside(plan.conflicts, parentId, toast))) return null;
           // имена лежащих освободились - план заново, конфликтов больше не будет
         }
         const result = await moveEntries(ids, parentId, resolutions);
         moved = true;
         const summary = moveSummary(result);
-        toast(summary.text, summary.kind);
+        const any = result.moved + result.replaced > 0;
+        const text = any && opts.label !== undefined ? `${summary.text} → «${opts.label}»` : summary.text;
+        const undo = opts.undo;
+        // пропущенное осталось на месте - «вернуть» его некуда, кнопку не показываем
+        const canUndo = any && result.skipped === 0 && undo !== undefined;
+        if (canUndo) toast(text, summary.kind, { label: 'Отменить', onClick: undo });
+        else toast(text, summary.kind);
+        return result;
       } catch (e) {
         if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось переместить'), 'error');
+        return null;
       } finally {
         done(moved);
       }

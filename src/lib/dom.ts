@@ -77,3 +77,15 @@ export function readFileText(file: Blob): Promise<string> {
     reader.readAsText(file);
   });
 }
+
+/**
+ * Меню браузера по правому клику (Назад, Обновить, Печать…) в окне клиента не к месту:
+ * своё меню есть у карточек и дерева папок. Остаётся оно в полях ввода (вырезать,
+ * вставить, орфография) и над выделенным текстом (копировать).
+ */
+export function suppressBrowserContextMenu(e: MouseEvent): void {
+  if (e.defaultPrevented || isTypingTarget(e.target)) return;
+  const selected = window.getSelection()?.toString() ?? '';
+  if (selected.trim() !== '') return;
+  e.preventDefault();
+}

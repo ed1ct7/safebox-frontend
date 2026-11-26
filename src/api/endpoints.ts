@@ -105,6 +105,14 @@ export function getFolders(): Promise<FoldersResponse> {
   return api.get<FoldersResponse>('/api/v1/folders');
 }
 
+/**
+ * Папки по путям от parentId («Мемы/Коты»): недостающие создаются, существующие
+ * берутся как есть. ids[i] - папка последнего сегмента paths[i].
+ */
+export function createFolders(parentId: number | null, paths: string[]): Promise<{ ids: (number | null)[] }> {
+  return api.post<{ ids: (number | null)[] }>('/api/v1/folders', { parentId, paths });
+}
+
 /** Имя, описание и адрес ссылки: что передано, то и меняется (UF-22). */
 export function updateEntry(id: number, patch: EntryPatch): Promise<Entry> {
   return api.patch<Entry>(`/api/v1/entries/${id}`, patch);

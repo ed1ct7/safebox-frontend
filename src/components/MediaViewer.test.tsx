@@ -280,3 +280,76 @@ describe('текст', () => {
     expect(signal?.aborted).toBe(true);
   });
 });
+
+describe('перемещение из просмотра', () => {
+  const places = [
+    { digit: 1, id: 30, label: 'Коты', title: 'Мемы / Коты' },
+    { digit: 3, id: 31, label: 'Разное', title: 'Разное' },
+  ];
+  const renderMove = (entry: Entry = photo) => {
+    const onMoveTo = vi.fn(async () => true);
+    const onMovePick = vi.fn(async () => false);
+    render(
+      <MediaViewer
+        items={[entry, song]}
+        index={0}
+        onIndex={vi.fn()}
+        onClose={vi.fn()}
+        onActivity={vi.fn()}
+        places={places}
+        onMoveTo={onMoveTo}
+        onMovePick={onMovePick}
+      />,
+    );
+    return { onMoveTo, onMovePick };
+  };
+
+  it('цифра места перемещает показанное; свободная цифра и Shift - ничего', () => {
+    const { onMoveTo } = renderMove();
+    fireEvent.keyDown(window, { key: '2', code: 'Digit2' });
+    fireEvent.keyDown(window, { key: '!', code: 'Digit1', shiftKey: true });
+    expect(onMoveTo).not.toHaveBeenCalled();
+    fireEvent.keyDown(window, { key: '3', code: 'Numpad3' });
+    expect(onMoveTo).toHaveBeenCalledWith(photo, 31);
+  });
+
+  it('цифра работает на любой раскладке и с фокусом на видео', () => {
+    const video = makeEntry({ id: 5, kind: 'video', name: 'ролик.mp4', mime: 'video/mp4' });
+    const { onMoveTo } = renderMove(video);
+    const el = document.querySelector('video')!;
+    fireEvent.keyDown(el, { key: '1', code: 'Digit1' });
+    expect(onMoveTo).toHaveBeenCalledWith(video, 30);
+  });
+
+  it('M и кнопка «Переместить…» открывают выбор папки; полоса показывает места', () => {
+    const { onMovePick, onMoveTo } = renderMove();
+    fireEvent.keyDown(window, { key: 'ь', code: 'KeyM' });
+    expect(onMovePick).toHaveBeenCalledWith(photo);
+    fireEvent.click(screen.getByRole('button', { name: /1 Коты/ }));
+    expect(onMoveTo).toHaveBeenCalledWith(photo, 30);
+  });
+
+  it('место, где запись уже лежит, недоступно', () => {
+    renderMove({ ...photo, parentId: 31 });
+    expect(screen.getByRole('button', { name: /Разное/ })).toBeDisabled();
+  });
+
+  it('без мест - подсказка, как их добавить', () => {
+    render(
+      <MediaViewer items={[photo]} index={0} onIndex={vi.fn()} onClose={vi.fn()} onActivity={vi.fn()} onMoveTo={vi.fn()} />,
+    );
+    expect(screen.getByText(/Цифры 1–9 - «Места»/)).toBeInTheDocument();
+  });
+
+  it('клавиши в диалоге поверх просмотра - не его', () => {
+    const { onMoveTo } = renderMove();
+    const dialog = document.createElement('div');
+    dialog.setAttribute('role', 'dialog');
+    const btn = document.createElement('button');
+    dialog.append(btn);
+    document.body.append(dialog);
+    fireEvent.keyDown(btn, { key: '1', code: 'Digit1' });
+    expect(onMoveTo).not.toHaveBeenCalled();
+    dialog.remove();
+  });
+});

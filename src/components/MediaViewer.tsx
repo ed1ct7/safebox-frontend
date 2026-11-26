@@ -5,6 +5,7 @@ import { mediaUrl } from '../api/endpoints';
 import { decodeText, isAudio, isMarkdown, isProse, isText, MARKDOWN_RENDER_LIMIT, TEXT_LIMIT } from '../lib/fileView';
 import type { DecodedText } from '../lib/fileView';
 import { formatBytes } from '../lib/format';
+import { digitOfKey } from '../lib/places';
 import type { Entry, EntryPatch } from '../api/types';
 import { isInteractiveTarget, isTypingTarget, triggerDownload } from '../lib/dom';
 import { displayName } from '../lib/link';
@@ -26,6 +27,19 @@ interface View {
 }
 
 const FIT: View = { scale: 1, x: 0, y: 0 };
+
+/** «Место» в полосе просмотрщика: цифра, папка, короткое имя и полный путь. */
+export interface PlaceChip {
+  digit: number;
+  id: number;
+  label: string;
+  title: string;
+}
+
+const NO_PLACES: readonly PlaceChip[] = [];
+
+/** Полноэкранное сейчас видео (родной полный экран плеера). */
+const videoFullscreen = () => document.fullscreenElement instanceof HTMLVideoElement;
 
 // react-markdown - отдельный чанк: грузится при первой открытой заметке
 const MarkdownView = lazy(() => import('./MarkdownView'));
@@ -56,6 +70,9 @@ function labelOf(entry: Entry): string {
  * Аудио, доиграв, переходит к следующему аудио (плейлист папки). Фото: колесо - зум 15–600%,
  * перетаскивание увеличенного, двойной клик - 100%/200%. Слева - панель тегов и
  * описания (🏷 возвращает). Esc или клик мимо - выход.
+ * Перемещение не выходя из просмотра: цифры 1–9 - в «Места», M - палитра «Переместить в…»;
+ * перемещённое уходит из ленты, на его место встаёт следующее. Видео во весь экран после
+ * перемещения цифрой снова открывается во весь экран.
  */
 export function MediaViewer({
   items,
@@ -68,6 +85,9 @@ export function MediaViewer({
   onFilterTag,
   onSavePatch,
   onDelete,
+  places = NO_PLACES,
+  onMoveTo,
+  onMovePick,
 }: {
   items: Entry[];
   index: number;
@@ -80,6 +100,11 @@ export function MediaViewer({
   onSavePatch?: (id: number, patch: EntryPatch) => Promise<void>;
   /** Delete в просмотре: текущая запись - в корзину (без вопроса, Ctrl+Z вернёт) */
   onDelete?: (entry: Entry) => void;
+  places?: readonly PlaceChip[];
+  /** переместить запись в папку; true - перемещено (лента уже без неё) */
+  onMoveTo?: (entry: Entry, parentId: number) => Promise<boolean>;
+  /** палитра «Переместить в…» для записи; true - перемещено */
+  onMovePick?: (entry: Entry) => Promise<boolean>;
 }) {
   const [view, setView] = useState<View>(FIT);
   const [broken, setBroken] = useState(false);
@@ -87,12 +112,37 @@ export function MediaViewer({
   const stageRef = useRef<HTMLDivElement>(null);
   const mediaRef = useRef<HTMLMediaElement | null>(null); // <video> или <audio> текущей записи
   const drag = useRef<{ px: number; py: number; x: number; y: number } | null>(null);
+  const refullscreen = useRef(false); // следующее видео - сразу во весь экран
+  const moving = useRef(false);
   const entry = items[index];
 
   useEffect(() => {
     setView(FIT);
     setBroken(false);
-  }, [entry?.id]);
+    if (entry?.kind !== 'video') refullscreen.current = false; // VideoStage забирает флаг раньше
+  }, [entry?.id, entry?.kind]);
+
+  const moveTo = async (target: Entry, parentId: number) => {
+    if (onMoveTo === undefined || moving.current || target.parentId === parentId) return;
+    moving.current = true;
+    refullscreen.current = videoFullscreen();
+    try {
+      if (!(await onMoveTo(target, parentId))) refullscreen.current = false;
+    } finally {
+      moving.current = false;
+    }
+    onActivity();
+  };
+
+  const pickTarget = async (target: Entry) => {
+    if (onMovePick === undefined || moving.current) return;
+    const wasFull = videoFullscreen();
+    if (document.fullscreenElement !== null && document.fullscreenElement !== undefined) {
+      await document.exitFullscreen().catch(() => undefined); // палитра поверх видео не видна
+    }
+    refullscreen.current = wasFull;
+    if (!(await onMovePick(target))) refullscreen.current = false;
+  };
 
   const go = (delta: number) => {
     if (items.length < 2) return;
@@ -103,9 +153,22 @@ export function MediaViewer({
   useWindowEvent('keydown', (e) => {
     if (isTypingTarget(e.target) || entry === undefined) return; // стрелки в поле тегов листают подсказки
     if (e.ctrlKey || e.metaKey || e.altKey) return;
+    // фокус в диалоге поверх просмотра (палитра перемещения, «имя занято») - клавиши его
+    const own = stageRef.current?.closest('[role="dialog"]') ?? null;
+    const inDialog = e.target instanceof Element ? e.target.closest('[role="dialog"]') : null;
+    if (inDialog !== null && inDialog !== own) return;
     // фокус на <video> (щёлкнули по его панели): стрелки и пробел - его собственные (перемотка, пауза)
     const media = e.target instanceof HTMLMediaElement;
-    if (e.key === 'ArrowLeft' && !media) go(-1);
+    const digit = e.shiftKey ? undefined : digitOfKey(e.code);
+    if (digit !== undefined && onMoveTo !== undefined) {
+      // e.code: цифры верхнего ряда и цифрового блока на любой раскладке
+      e.preventDefault();
+      const place = places.find((p) => p.digit === digit);
+      if (!e.repeat && place !== undefined) void moveTo(entry, place.id);
+    } else if (e.code === 'KeyM' && !e.shiftKey && onMovePick !== undefined) {
+      e.preventDefault();
+      if (!e.repeat) void pickTarget(entry);
+    } else if (e.key === 'ArrowLeft' && !media) go(-1);
     else if (e.key === 'ArrowRight' && !media) go(1);
     else if (e.key === 'Delete' && onDelete !== undefined) {
       e.preventDefault();
@@ -253,7 +316,13 @@ export function MediaViewer({
               />
             )
           ) : entry.kind === 'video' ? (
-            <VideoStage key={entry.id} entry={entry} mediaRef={mediaRef} onActivity={onActivity} />
+            <VideoStage
+              key={entry.id}
+              entry={entry}
+              mediaRef={mediaRef}
+              onActivity={onActivity}
+              autoFullscreen={refullscreen}
+            />
           ) : isAudio(entry) ? (
             <AudioStage key={entry.id} entry={entry} mediaRef={mediaRef} onActivity={onActivity} onEnded={nextAudio} />
           ) : isText(entry) ? (
@@ -272,10 +341,49 @@ export function MediaViewer({
             </>
           )}
         </div>
+        {onMoveTo !== undefined && (
+          <div className="flex shrink-0 items-center gap-1.5 overflow-x-auto px-4 pb-3 pt-1" aria-label="Переместить">
+            {onMovePick !== undefined && (
+              <button
+                type="button"
+                className={chipBtn}
+                title="Найти папку по имени и переместить (M)"
+                onClick={() => void pickTarget(entry)}
+              >
+                ⇄ Переместить… <kbd className={kbd}>M</kbd>
+              </button>
+            )}
+            {places.length === 0 ? (
+              <span className="text-xs text-zinc-600">
+                Цифры 1–9 - «Места»: добавьте папку правым кликом в дереве или ☆ в окне перемещения
+              </span>
+            ) : (
+              places.map((p) => {
+                const here = p.id === entry.parentId;
+                return (
+                  <button
+                    key={p.digit}
+                    type="button"
+                    disabled={here}
+                    className={chipBtn}
+                    title={here ? `${p.title} - уже здесь` : `Переместить в «${p.title}» (${p.digit})`}
+                    onClick={() => void moveTo(entry, p.id)}
+                  >
+                    <kbd className={kbd}>{p.digit}</kbd> {p.label}
+                  </button>
+                );
+              })
+            )}
+          </div>
+        )}
       </div>
     </Modal>
   );
 }
+
+const chipBtn =
+  'flex shrink-0 items-center gap-1.5 rounded-full border border-zinc-800 bg-zinc-900/80 px-3 py-1 text-xs text-zinc-300 transition hover:border-zinc-600 hover:text-zinc-100 disabled:pointer-events-none disabled:opacity-35';
+const kbd = 'rounded bg-zinc-800 px-1 font-mono text-[10px] text-zinc-400';
 
 /**
  * При уходе с видео/аудио поток обрывается явно: пока браузер держит соединение,
@@ -315,13 +423,24 @@ function VideoStage({
   entry,
   mediaRef,
   onActivity,
+  autoFullscreen,
 }: {
   entry: Entry;
   mediaRef: MutableRefObject<HTMLMediaElement | null>;
   onActivity: () => void;
+  /** true - открыть во весь экран сразу (предыдущее видео смотрели так и переместили цифрой) */
+  autoFullscreen?: MutableRefObject<boolean>;
 }) {
   const [failed, setFailed] = useState(false);
   useAbortOnLeave(mediaRef);
+
+  useEffect(() => {
+    if (autoFullscreen?.current !== true) return;
+    autoFullscreen.current = false;
+    const v = mediaRef.current;
+    // браузер разрешает полный экран только вскоре после нажатия клавиши - не вышло, и ладно
+    if (v instanceof HTMLVideoElement) void v.requestFullscreen?.()?.catch(() => undefined);
+  }, [autoFullscreen, mediaRef]);
 
   if (failed) return <CannotShow entry={entry} what="Браузер не может воспроизвести этот формат." />;
   return (

@@ -1,0 +1,860 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeBox — макет новой компоновки</title>
+<style>
+:root {
+  --bg: #0b0b0e; --panel: #111115; --panel2: #18181d; --hover: #1e1e25; --line: #24242c; --line2: #363640;
+  --text: #ececf1; --dim: #a3a3ae; --dim2: #6c6c78; --accent: #6366f1; --accent2: #a5b4fc;
+  --soft: rgba(99,102,241,.16); --danger: #f87171; --amber: #fbbf24;
+}
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #3a3a44 transparent; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 13px/1.4 system-ui, 'Segoe UI', Roboto, sans-serif; overflow: hidden; color-scheme: dark; }
+button, input, select, textarea { font: inherit; color: inherit; }
+button { cursor: pointer; background: none; border: 0; padding: 0; }
+svg { display: block; flex: none; }
+:focus-visible { outline: 2px solid var(--accent); outline-offset: 1px; }
+.app { height: 100%; display: grid; grid-template-rows: auto 1fr auto; grid-template-columns: minmax(0, 1fr); }
+.bar, .top { min-width: 0; overflow: hidden; }
+
+/* верхняя строка */
+.top { display: flex; align-items: center; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel); }
+.brand { font-weight: 600; font-size: 14px; white-space: nowrap; }
+.brand small { color: var(--dim2); font-weight: 400; margin-left: 6px; }
+.omni { position: relative; flex: 1; max-width: 620px; margin: 0 auto; }
+.omni svg { position: absolute; left: 10px; top: 50%; transform: translateY(-50%); color: var(--dim2); }
+.omni input { width: 100%; height: 34px; padding: 0 44px 0 34px; background: var(--bg); border: 1px solid var(--line2); border-radius: 9px; outline: none; }
+.omni input:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--soft); }
+.omni input::placeholder { color: var(--dim2); }
+.omni kbd { position: absolute; right: 9px; top: 50%; transform: translateY(-50%); font: 11px system-ui; color: var(--dim2); border: 1px solid var(--line2); border-radius: 5px; padding: 1px 6px; }
+.btn { display: inline-flex; align-items: center; gap: 6px; height: 32px; padding: 0 11px; border: 1px solid var(--line2); border-radius: 8px; background: var(--panel2); white-space: nowrap; }
+.btn:hover { border-color: var(--dim2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary:hover { background: #7376f5; }
+.ib { display: inline-flex; align-items: center; justify-content: center; width: 32px; height: 32px; border-radius: 8px; color: var(--dim); }
+.ib:hover { background: var(--hover); color: var(--text); }
+.ib.on { background: var(--soft); color: var(--accent2); }
+
+.body { display: flex; min-height: 0; position: relative; }
+
+/* панели «Папки» и «Теги» */
+.dock { display: flex; flex: none; min-height: 0; background: var(--panel); position: relative; }
+.dock[hidden] { display: none; }
+.dock.left { border-right: 1px solid var(--line); }
+.dock.right { border-left: 1px solid var(--line); }
+.dock.stack { flex-direction: column; width: var(--dw); }
+.dock.cols { flex-direction: row; }
+.panel { display: flex; flex-direction: column; min-height: 0; min-width: 0; position: relative; }
+.dock.stack .panel { flex: 1 1 0; }
+.dock.stack.split .panel:first-child { flex: 0 0 calc(var(--split) * 100%); }
+.dock.stack .panel.collapsed { flex: none; }
+.dock.stack .panel + .panel, .dock.stack .hsplit + .panel { border-top: 1px solid var(--line); }
+.dock.cols .panel { width: var(--pw); flex: none; }
+.dock.cols .panel + .panel { border-left: 1px solid var(--line); }
+.phead { display: flex; align-items: center; gap: 4px; height: 36px; flex: none; padding: 0 6px 0 10px; color: var(--dim2); font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; cursor: grab; user-select: none; }
+.phead .t { flex: 1; min-width: 0; display: flex; align-items: center; gap: 7px; }
+.phead .t .badge { text-transform: none; letter-spacing: 0; }
+.phead .grip { opacity: 0; color: var(--dim2); }
+.phead:hover .grip { opacity: .8; }
+.phead:hover { color: var(--dim); }
+.ib.sm { width: 24px; height: 24px; border-radius: 6px; }
+.panel.collapsed .phead { border-bottom: 0; }
+.panel .tsearch { padding: 0 10px 8px; }
+.panel.lifted { opacity: .45; }
+.hsplit { flex: none; height: 7px; margin: -3px 0 -4px; position: relative; z-index: 3; cursor: row-resize; }
+.vsplit { position: absolute; top: 0; bottom: 0; width: 7px; z-index: 3; cursor: col-resize; }
+.vsplit.r { right: -4px; } .vsplit.l { left: -4px; }
+.hsplit::after, .vsplit::after { content: ''; position: absolute; background: var(--accent); opacity: 0; transition: opacity .12s; }
+.hsplit::after { left: 0; right: 0; top: 2px; height: 3px; }
+.vsplit::after { top: 0; bottom: 0; left: 2px; width: 3px; }
+.hsplit:hover::after, .vsplit:hover::after, .hsplit.on::after, .vsplit.on::after { opacity: .8; }
+body.resizing, body.pdrag { user-select: none; }
+body.resizing * , body.pdrag * { cursor: inherit !important; }
+body.pdrag { cursor: grabbing; }
+#ghost { position: fixed; z-index: 90; pointer-events: none; display: flex; align-items: center; gap: 6px; padding: 5px 10px; border-radius: 8px; background: #26262e; border: 1px solid var(--accent); box-shadow: 0 8px 24px #000a; font-size: 12px; }
+#ghost[hidden], #dropPv[hidden], .edgezone[hidden] { display: none; }
+#dropPv { position: fixed; z-index: 85; pointer-events: none; background: rgba(99,102,241,.22); border: 2px solid var(--accent); border-radius: 8px; display: flex; align-items: center; justify-content: center; text-align: center; padding: 10px; color: #fff; font-weight: 600; transition: all .08s; }
+.edgezone { position: fixed; z-index: 80; pointer-events: none; border: 1px dashed #4b4d8f; background: rgba(99,102,241,.05); border-radius: 8px; }
+.sidescroll { flex: 1; overflow-y: auto; padding: 0 6px 10px; min-height: 0; }
+.sidefoot { border-top: 1px solid var(--line); padding: 6px; display: flex; align-items: center; gap: 4px; }
+.node, .trow, .chead, .foot { display: flex; align-items: center; gap: 7px; width: 100%; height: 28px; padding: 0 8px; border-radius: 7px; text-align: left; color: var(--dim); }
+.node:hover, .trow:hover, .chead:hover, .foot:hover { background: var(--hover); color: var(--text); }
+.node.on { background: var(--soft); color: var(--text); }
+.node .chev, .chead .chev { color: var(--dim2); transition: transform .12s; }
+.chev.open { transform: rotate(90deg); }
+.nm { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.cnt { color: var(--dim2); font-size: 11.5px; font-variant-numeric: tabular-nums; }
+.tsearch { display: flex; gap: 6px; padding: 0 4px 8px; }
+.tsearch input { flex: 1; min-width: 0; height: 28px; padding: 0 9px; background: var(--bg); border: 1px solid var(--line2); border-radius: 7px; outline: none; }
+.tsearch input:focus { border-color: var(--accent); }
+.tsearch button { height: 28px; padding: 0 8px; border: 1px solid var(--line2); border-radius: 7px; color: var(--dim); font-size: 12px; white-space: nowrap; }
+.tsearch button:hover { color: var(--text); border-color: var(--dim2); }
+.chead { margin-top: 6px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--dim2); height: 26px; }
+.chead .dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
+.trow { padding-left: 12px; }
+.trow .tick { width: 15px; height: 15px; border-radius: 4px; border: 1px solid var(--line2); display: flex; align-items: center; justify-content: center; color: transparent; }
+.trow.on { color: var(--text); }
+.trow.on .tick { background: var(--accent); border-color: var(--accent); color: #fff; }
+.trow .more { display: none; width: 20px; height: 20px; border-radius: 5px; align-items: center; justify-content: center; color: var(--dim2); }
+.trow:hover .more { display: flex; }
+.trow:hover .cnt { display: none; }
+.trow .more:hover { background: var(--line2); color: var(--text); }
+.morerow { height: 24px; padding: 0 8px 0 34px; color: var(--dim2); font-size: 12px; border-radius: 7px; width: 100%; text-align: left; }
+.morerow:hover { color: var(--accent2); }
+.empty { color: var(--dim2); padding: 10px 12px; }
+
+/* центр */
+.content { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.bar { display: flex; align-items: center; gap: 8px; height: 46px; padding: 0 12px 0 16px; border-bottom: 1px solid var(--line); }
+.crumbs { display: flex; align-items: center; gap: 2px; min-width: 0; flex: 1; overflow: hidden; white-space: nowrap; }
+.crumbs button { padding: 3px 6px; border-radius: 6px; color: var(--dim); }
+.crumbs button:hover { background: var(--hover); color: var(--text); }
+.crumbs button.cur { color: var(--text); font-weight: 600; font-size: 14px; }
+.crumbs .sep { color: var(--dim2); }
+.crumbs .total { color: var(--dim2); margin-left: 8px; }
+.seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; height: 30px; }
+.seg button { padding: 0 10px; color: var(--dim); }
+.seg button + button { border-left: 1px solid var(--line2); }
+.seg button.on { background: var(--soft); color: var(--accent2); }
+.bar select { height: 30px; background: var(--panel2); border: 1px solid var(--line2); border-radius: 8px; padding: 0 6px; }
+.selinfo { font-weight: 600; margin-right: 4px; white-space: nowrap; }
+.tb { display: inline-flex; align-items: center; gap: 6px; height: 30px; padding: 0 10px; border-radius: 8px; color: var(--dim); white-space: nowrap; }
+.tb:hover { background: var(--hover); color: var(--text); }
+.tb.danger:hover { color: var(--danger); }
+
+.frow { display: flex; align-items: center; flex-wrap: wrap; gap: 6px; padding: 8px 12px 8px 16px; border-bottom: 1px solid var(--line); background: #0f0f18; }
+.frow[hidden] { display: none; }
+.frow .lbl { color: var(--dim2); }
+.fgrp { display: inline-flex; align-items: center; gap: 4px; padding: 2px 3px 2px 9px; border: 1px solid #3b3d7a; background: var(--soft); border-radius: 8px; }
+.fgrp .gl { color: var(--accent2); font-size: 12px; margin-right: 2px; }
+.fgrp i { font-style: normal; color: var(--dim2); font-size: 12px; }
+.ft { display: inline-flex; align-items: center; gap: 4px; height: 22px; padding: 0 5px 0 8px; border-radius: 6px; background: #2b2d63; color: #fff; }
+.ft:hover { background: #3a3d85; }
+.ft svg { opacity: .6; }
+.joiner { color: var(--dim2); font-size: 12px; }
+.ghost { height: 26px; padding: 0 9px; border-radius: 7px; border: 1px dashed var(--line2); color: var(--dim); display: inline-flex; align-items: center; gap: 5px; }
+.ghost:hover { color: var(--text); border-color: var(--dim2); }
+.frow .sp { flex: 1; }
+.frow .seg { height: 26px; }
+.link { color: var(--dim); padding: 3px 6px; border-radius: 6px; }
+.link:hover { color: var(--text); background: var(--hover); }
+
+.gridwrap { flex: 1; overflow-y: auto; padding: 16px; min-height: 0; }
+.grid { display: grid; gap: 12px; grid-template-columns: repeat(auto-fill, minmax(var(--tile, 168px), 1fr)); user-select: none; }
+.card { position: relative; border-radius: 11px; padding: 6px 6px 8px; border: 1px solid transparent; cursor: default; }
+.card:hover { background: var(--panel2); }
+.card.sel { background: var(--soft); border-color: var(--accent); }
+.thumb { position: relative; aspect-ratio: 4 / 3; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.thumb .scene { position: absolute; inset: 0; width: 100%; height: 100%; }
+.thumb .paper { position: absolute; inset: 10% 22% 0; background: #e9e6dd; border-radius: 4px 4px 0 0; padding: 12% 10% 0; display: flex; flex-direction: column; gap: 7%; }
+.thumb .paper b { display: block; height: 5%; min-height: 3px; background: #b9b5a8; border-radius: 2px; }
+.thumb .paper b:first-child { width: 60%; background: #6f6c63; }
+.thumb .play { position: relative; width: 34px; height: 34px; border-radius: 50%; background: #000a; display: flex; align-items: center; justify-content: center; color: #fff; }
+.thumb .dur { position: absolute; right: 6px; bottom: 6px; padding: 1px 5px; border-radius: 4px; background: #000b; font-size: 11px; }
+.thumb .dom { position: absolute; left: 8px; right: 8px; bottom: 7px; font-size: 11px; color: #cbd5e1; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; text-align: center; }
+.card .cb { position: absolute; left: 12px; top: 12px; width: 20px; height: 20px; border-radius: 6px; border: 1px solid #d4d4d8; background: #0009; color: transparent; display: flex; align-items: center; justify-content: center; opacity: 0; z-index: 1; }
+.card:hover .cb, .card.sel .cb, .anysel .cb { opacity: 1; }
+.card.sel .cb { background: var(--accent); border-color: var(--accent); color: #fff; }
+.card .title { margin: 7px 4px 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .cap { margin: 1px 4px 0; color: var(--dim2); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.card .ctags { margin: 5px 4px 0; display: flex; gap: 4px; height: 18px; overflow: hidden; }
+.mini { padding: 0 6px; height: 18px; line-height: 17px; border-radius: 5px; border: 1px solid var(--line2); color: var(--dim); font-size: 11px; white-space: nowrap; }
+.blank { padding: 70px 20px; text-align: center; color: var(--dim2); }
+.blank b { display: block; color: var(--dim); font-size: 15px; font-weight: 500; margin-bottom: 4px; }
+
+/* правая панель */
+.insp { width: 320px; flex: none; border-left: 1px solid var(--line); background: var(--panel); overflow-y: auto; padding: 14px; display: flex; flex-direction: column; gap: 14px; }
+.insp[hidden] { display: none; }
+.insp .pv { aspect-ratio: 16 / 10; border-radius: 10px; overflow: hidden; position: relative; display: flex; align-items: center; justify-content: center; flex: none; }
+.insp .pv .thumb { position: absolute; inset: 0; aspect-ratio: auto; border-radius: 0; }
+.insp .stack { position: relative; height: 150px; flex: none; }
+.insp .stack .thumb { position: absolute; width: 58%; left: 21%; top: 12px; box-shadow: 0 6px 20px #000a; border: 1px solid #0006; }
+.insp h2 { margin: 0; font-size: 15px; font-weight: 600; overflow-wrap: anywhere; }
+.insp .sub { color: var(--dim2); margin-top: 2px; }
+.acts { display: flex; gap: 4px; margin: -4px -4px; }
+.acts .tb { flex: 1; justify-content: center; padding: 0 6px; border: 1px solid var(--line); }
+.sec h3 { margin: 0 0 8px; font-size: 11px; font-weight: 600; text-transform: uppercase; letter-spacing: .6px; color: var(--dim2); display: flex; align-items: center; gap: 6px; }
+.trows { display: grid; grid-template-columns: max-content 1fr; gap: 6px 12px; align-items: start; margin-bottom: 10px; }
+.trows .cl { color: var(--dim2); font-size: 12px; line-height: 24px; }
+.chips { display: flex; flex-wrap: wrap; gap: 5px; }
+.chip { display: inline-flex; align-items: center; gap: 4px; height: 24px; padding: 0 9px; border-radius: 7px; background: #26262e; border: 1px solid var(--line2); max-width: 100%; }
+.chip:hover { border-color: var(--accent); background: #2c2c38; }
+.chip.inh { background: transparent; border-style: dashed; color: var(--dim); }
+.chip.part { background: transparent; border-style: dotted; color: var(--dim); }
+.chip small { color: var(--dim2); font-size: 11px; }
+.chip svg { color: var(--dim2); }
+.addtag { position: relative; }
+.addtag svg { position: absolute; left: 9px; top: 50%; transform: translateY(-50%); color: var(--dim2); }
+.addtag input, .insp textarea { width: 100%; background: var(--bg); border: 1px solid var(--line2); border-radius: 8px; outline: none; }
+.addtag input { height: 32px; padding: 0 10px 0 30px; }
+.addtag input:focus, .insp textarea:focus { border-color: var(--accent); box-shadow: 0 0 0 3px var(--soft); }
+.insp textarea { padding: 8px 10px; min-height: 64px; resize: vertical; display: block; }
+.hint { color: var(--dim2); font-size: 11.5px; margin-top: 6px; }
+dl { display: grid; grid-template-columns: max-content 1fr; gap: 5px 14px; margin: 0; font-size: 12px; }
+dt { color: var(--dim2); } dd { margin: 0; color: var(--dim); overflow-wrap: anywhere; }
+
+.status { display: flex; gap: 14px; padding: 5px 12px; border-top: 1px solid var(--line); background: var(--panel); color: var(--dim2); font-size: 12px; }
+.status .sp { flex: 1; }
+
+/* поповер, тост, просмотр, пояснения */
+#pop { position: fixed; z-index: 50; background: #1b1b22; border: 1px solid var(--line2); border-radius: 10px; padding: 5px; box-shadow: 0 12px 34px #000b; max-height: 360px; overflow-y: auto; min-width: 200px; }
+#pop[hidden] { display: none; }
+#pop .ph { padding: 6px 9px 3px; font-size: 11px; text-transform: uppercase; letter-spacing: .6px; color: var(--dim2); }
+#pop .pi { display: flex; align-items: center; gap: 8px; width: 100%; min-height: 30px; padding: 4px 9px; border-radius: 7px; text-align: left; }
+#pop .pi:hover, #pop .pi.act { background: var(--soft); }
+#pop .pi.danger { color: var(--danger); }
+#pop .pi .c { color: var(--dim2); }
+#pop .pi .r { margin-left: auto; color: var(--dim2); font-size: 11.5px; padding-left: 14px; }
+#pop .pi .d { display: block; color: var(--dim2); font-size: 11.5px; }
+#pop .pnote { padding: 6px 9px; color: var(--dim2); font-size: 12px; max-width: 250px; }
+#pop hr { border: 0; border-top: 1px solid var(--line); margin: 4px 0; }
+#toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); z-index: 70; background: #26262e; border: 1px solid var(--line2); border-radius: 9px; padding: 8px 14px; box-shadow: 0 8px 24px #000a; }
+#toast[hidden] { display: none; }
+#viewer { position: fixed; inset: 0; z-index: 40; background: #050507f2; display: flex; }
+#viewer[hidden] { display: none; }
+.vmain { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.vtop { display: flex; align-items: center; gap: 10px; padding: 10px 14px; }
+.vtop .nm { font-size: 14px; }
+.vstage { flex: 1; min-height: 0; display: flex; align-items: center; justify-content: center; gap: 14px; padding: 0 14px 20px; }
+.vstage .thumb { height: 100%; max-width: 100%; aspect-ratio: 4 / 3; border-radius: 12px; flex: 0 1 auto; min-width: 0; }
+.vnav { width: 40px; height: 64px; border-radius: 10px; color: var(--dim); display: flex; align-items: center; justify-content: center; flex: none; }
+.vnav:hover { background: var(--hover); color: #fff; }
+#fab { position: fixed; right: 16px; bottom: 38px; z-index: 30; height: 34px; padding: 0 14px; border-radius: 17px; background: #2a2208; border: 1px solid #7c5e10; color: var(--amber); font-weight: 600; box-shadow: 0 6px 20px #0009; }
+#notes { position: fixed; right: 16px; bottom: 80px; z-index: 30; width: 370px; max-width: calc(100vw - 32px); max-height: calc(100vh - 150px); overflow-y: auto; background: #1b1a14; border: 1px solid #7c5e10; border-radius: 12px; padding: 12px; box-shadow: 0 14px 40px #000c; }
+#notes[hidden] { display: none; }
+#notes h4 { margin: 0 0 8px; color: var(--amber); font-size: 13px; }
+#notes .n { display: grid; grid-template-columns: 22px 1fr; gap: 8px; padding: 7px 6px; border-radius: 8px; cursor: default; }
+#notes .n:hover { background: #2a2718; }
+#notes .n b { width: 20px; height: 20px; border-radius: 50%; background: var(--amber); color: #1b1a14; font-size: 11px; display: flex; align-items: center; justify-content: center; }
+#notes .n span { color: #e7e2cf; } #notes .n em { display: block; font-style: normal; color: #9c9682; font-size: 12px; margin-top: 2px; }
+.hl { outline: 2px solid var(--amber) !important; outline-offset: -2px; }
+
+@media (max-width: 1180px) {
+  .insp { width: 280px; }
+  .brand small { display: none; }
+}
+@media (max-width: 860px) {
+  .insp:not(.vinsp) { position: absolute; right: 0; top: 0; bottom: 0; z-index: 20; box-shadow: -14px 0 34px #000a; }
+}
+</style>
+</head>
+<body>
+<div class="app">
+  <header class="top">
+    <div class="brand">SafeBox<small>archive.safebox</small></div>
+    <div class="omni" id="omniBox">
+      <span id="omniIcon"></span>
+      <input id="omni" autocomplete="off" spellcheck="false" placeholder="Поиск: имя, описание или тег…">
+      <kbd>/</kbd>
+    </div>
+    <button class="btn primary" data-act="add-menu" id="addBtn"></button>
+    <button class="ib" data-act="settings" title="Настройки" id="gearBtn"></button>
+    <button class="ib" data-act="lock" title="Заблокировать сейф" id="lockBtn"></button>
+  </header>
+  <div class="body" id="body">
+    <div class="dock left" id="dockL"></div>
+    <section class="content">
+      <div class="bar" id="bar"></div>
+      <div class="frow" id="frow" hidden></div>
+      <div class="gridwrap" id="gridWrap"><div class="grid" id="grid"></div></div>
+    </section>
+    <div class="dock right" id="dockR"></div>
+    <aside class="insp" id="insp"></aside>
+  </div>
+  <footer class="status" id="status"></footer>
+</div>
+<div id="pop" hidden></div>
+<div class="edgezone" id="ezL" hidden></div><div class="edgezone" id="ezR" hidden></div><div id="dropPv" hidden></div><div id="ghost" hidden></div>
+<div id="viewer" hidden></div>
+<div id="toast" hidden></div>
+<div id="notes" hidden></div>
+<button id="fab" data-act="notes">Что изменилось · 8</button>
+
+<script>
+/* ───── иконки ───── */
+const P = {
+  search: '<circle cx="7" cy="7" r="4.5"/><path d="m10.5 10.5 3.5 3.5"/>',
+  plus: '<path d="M8 3v10M3 8h10"/>',
+  gear: '<circle cx="8" cy="8" r="2.2"/><path d="M8 1.5v2M8 12.5v2M1.5 8h2M12.5 8h2M3.4 3.4l1.4 1.4M11.2 11.2l1.4 1.4M3.4 12.6l1.4-1.4M11.2 4.8l1.4-1.4"/>',
+  lock: '<rect x="3.5" y="7" width="9" height="6.5" rx="1.5"/><path d="M5.5 7V5a2.5 2.5 0 0 1 5 0v2"/>',
+  folder: '<path d="M1.8 4.2c0-.7.5-1.2 1.2-1.2h3l1.4 1.6H13c.7 0 1.2.5 1.2 1.2v6c0 .7-.5 1.2-1.2 1.2H3c-.7 0-1.2-.5-1.2-1.2z"/>',
+  tag: '<path d="M2 2.5h5.2l6.3 6.3-5 5L2.2 7.5z"/><circle cx="5" cy="5.3" r=".9"/>',
+  chev: '<path d="m6 4 4 4-4 4"/>',
+  check: '<path d="m3.5 8.5 3 3 6-7"/>',
+  x: '<path d="m4 4 8 8M12 4l-8 8"/>',
+  trash: '<path d="M3 4.5h10M6.5 4.5V3h3v1.5M4.5 4.5l.6 8.5h5.8l.6-8.5"/>',
+  down: '<path d="M8 2.5v8M4.5 7.5 8 11l3.5-3.5M3 13.5h10"/>',
+  move: '<path d="M2 8h11M9.5 4.5 13 8l-3.5 3.5"/>',
+  open: '<path d="M6 3H3v10h10v-3M9 3h4v4M13 3 7.5 8.5"/>',
+  panel: '<rect x="2" y="3" width="12" height="10" rx="1.6"/><path d="M10 3v10"/>',
+  inh: '<path d="M4 3v6h7M8.5 6.5 11 9l-2.5 2.5"/>',
+  dots: '<circle cx="3.5" cy="8" r="1" fill="currentColor"/><circle cx="8" cy="8" r="1" fill="currentColor"/><circle cx="12.5" cy="8" r="1" fill="currentColor"/>',
+  play: '<path d="M5.5 3.5v9l7-4.5z" fill="currentColor"/>',
+  globe: '<circle cx="8" cy="8" r="5.5"/><path d="M2.5 8h11M8 2.5c2 2 2 9 0 11M8 2.5c-2 2-2 9 0 11"/>',
+  grip: '<circle cx="6" cy="4" r=".9" fill="currentColor"/><circle cx="10" cy="4" r=".9" fill="currentColor"/><circle cx="6" cy="8" r=".9" fill="currentColor"/><circle cx="10" cy="8" r=".9" fill="currentColor"/><circle cx="6" cy="12" r=".9" fill="currentColor"/><circle cx="10" cy="12" r=".9" fill="currentColor"/>',
+  edit: '<path d="M3 13l.5-2.7 7-7 2.2 2.2-7 7z"/>',
+};
+const ic = (n, s = 16) => `<svg width="${s}" height="${s}" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round">${P[n]}</svg>`;
+const $ = (s, r = document) => r.querySelector(s);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+
+/* ───── демо-данные (выдуманные) ───── */
+const CATS = [
+  { id: 'place', name: 'Место', tags: ['Грузия', 'Стамбул', 'Байкал', 'Алматы', 'Калининград', 'Сочи', 'Дом'] },
+  { id: 'people', name: 'Люди', tags: ['Аня', 'Миша', 'родители', 'коллеги'] },
+  { id: 'theme', name: 'Тема', tags: ['горы', 'море', 'еда', 'город', 'кошки', 'архитектура', 'закат', 'поход', 'рынок', 'музей', 'дорога', 'ночь'] },
+  { id: 'year', name: 'Год', tags: ['2022', '2023', '2024', '2025', '2026'] },
+  { id: 'type', name: 'Тип', tags: ['видео', 'скан', 'ссылка', 'договор'] },
+  { id: 'status', name: 'Статус', tags: ['избранное', 'разобрать', 'в печать'] },
+];
+const HUE = { горы: 205, море: 190, еда: 24, город: 258, кошки: 36, архитектура: 280, закат: 14, поход: 140, рынок: 44, музей: 320, дорога: 220, ночь: 240 };
+const TAGS = new Map();
+for (const c of CATS) for (const n of c.tags) TAGS.set(`${c.id}:${n}`, { id: `${c.id}:${n}`, cat: c.id, catName: c.name, name: n, count: 0 });
+
+let seed = 11;
+const rnd = () => (seed = (seed * 1664525 + 1013904223) >>> 0) / 4294967296;
+const pick = (a) => a[Math.floor(rnd() * a.length)];
+const cap = (s) => s[0].toUpperCase() + s.slice(1);
+
+const E = [];
+const byId = new Map();
+let nextId = 1;
+function add(e) { e.id = 'e' + nextId++; e.desc = e.desc || ''; e.direct = (e.tags || []).map((t) => ({ tag: t, inherit: e.kind === 'folder' })); delete e.tags; E.push(e); byId.set(e.id, e); return e.id; }
+const folder = (name, parent, tags) => add({ kind: 'folder', name, parent, tags });
+function photos(parent, n, themes, extra, year) {
+  for (let i = 1; i <= n; i++) {
+    const t1 = pick(themes); let t2 = pick(themes);
+    const tags = ['theme:' + t1]; if (t2 !== t1 && rnd() < .5) tags.push('theme:' + t2);
+    if (rnd() < .4) tags.push('people:' + pick(extra));
+    if (rnd() < .18) tags.push('status:избранное');
+    const video = rnd() < .12;
+    if (video) tags.push('type:видео');
+    add({ kind: video ? 'video' : 'image', name: `${cap(t1)} ${String(i).padStart(2, '0')}.${video ? 'mp4' : 'jpg'}`, parent, tags, hue: HUE[t1], size: video ? 40e6 + rnd() * 300e6 : 1.5e6 + rnd() * 6e6, date: `${String(1 + Math.floor(rnd() * 27)).padStart(2, '0')}.${String(1 + Math.floor(rnd() * 12)).padStart(2, '0')}.${year}`, dur: `${Math.floor(rnd() * 4)}:${String(Math.floor(rnd() * 60)).padStart(2, '0')}` });
+  }
+}
+const fTrips = folder('Поездки', null, []);
+const fGeo = folder('Грузия 2024', fTrips, ['place:Грузия', 'year:2024']);
+const fIst = folder('Стамбул 2023', fTrips, ['place:Стамбул', 'year:2023']);
+const fBai = folder('Байкал 2025', fTrips, ['place:Байкал', 'year:2025']);
+const fFam = folder('Семья', null, ['place:Дом']);
+const fDocs = folder('Документы', null, []);
+const fScan = folder('Сканы', fDocs, ['type:скан']);
+const fDeal = folder('Договоры', fDocs, ['type:договор']);
+const fLinks = folder('Ссылки', null, ['type:ссылка']);
+const fInbox = folder('Разобрать', null, ['status:разобрать']);
+photos(fGeo, 16, ['горы', 'еда', 'город', 'закат', 'дорога', 'рынок'], ['Аня', 'Миша'], 2024);
+photos(fIst, 13, ['город', 'еда', 'кошки', 'архитектура', 'море', 'рынок', 'ночь'], ['Аня', 'коллеги'], 2023);
+photos(fBai, 11, ['поход', 'горы', 'закат', 'дорога', 'море'], ['Миша'], 2025);
+photos(fFam, 10, ['кошки', 'еда', 'город', 'музей'], ['родители', 'Аня', 'Миша'], 2026);
+for (const n of ['Диплом', 'Полис ОМС', 'Свидетельство', 'Грамота', 'Квитанция 03', 'Чертёж дачи'])
+  add({ kind: 'doc', name: n + '.pdf', parent: fScan, tags: ['year:' + pick(['2022', '2023', '2024']), ...(rnd() < .3 ? ['status:в печать'] : [])], size: 2e5 + rnd() * 3e6, date: '14.03.2024' });
+for (const n of ['Аренда 2024', 'Интернет', 'Страховка авто', 'Подряд на ремонт'])
+  add({ kind: 'doc', name: n + '.pdf', parent: fDeal, tags: ['year:' + pick(['2024', '2025', '2026'])], size: 1e5 + rnd() * 9e5, date: '02.09.2025' });
+for (const [n, d, t] of [['Рецепт хачапури по-аджарски', 'eda.example', ['theme:еда', 'place:Грузия']], ['Маршрут по Сванетии на 5 дней', 'trips.example', ['theme:поход', 'place:Грузия', 'theme:горы']], ['Как снимать закат на телефон', 'photo.example', ['theme:закат']], ['Музеи Калининграда: что посмотреть', 'guide.example', ['theme:музей', 'place:Калининград']], ['Паромы через Босфор, расписание', 'ferry.example', ['place:Стамбул', 'theme:море']], ['Что взять в поход на Байкал', 'hike.example', ['place:Байкал', 'theme:поход']]])
+  add({ kind: 'link', name: n, parent: fLinks, tags: t, dom: d, size: 0, date: '19.11.2026' });
+photos(fInbox, 9, ['город', 'еда', 'кошки', 'ночь', 'архитектура'], ['коллеги'], 2026);
+
+const get = (id) => byId.get(id);
+function inherited(e) { const out = []; let p = e.parent; while (p) { const f = get(p); for (const d of f.direct) if (d.inherit) out.push({ tag: d.tag, from: f.id }); p = f.parent; } return out; }
+function eff(e) { const s = new Set(e.direct.map((d) => d.tag)); for (const i of inherited(e)) s.add(i.tag); return s; }
+function isUnder(e, fid) { let p = e.parent; while (p) { if (p === fid) return true; p = get(p).parent; } return false; }
+function recount() { for (const t of TAGS.values()) t.count = 0; for (const e of E) if (e.kind !== 'folder') for (const t of eff(e)) TAGS.get(t).count++; }
+const filesUnder = (fid) => E.filter((e) => e.kind !== 'folder' && isUnder(e, fid)).length;
+const fmtSize = (b) => b >= 1e9 ? (b / 1e9).toFixed(1).replace('.', ',') + ' ГБ' : b >= 1e6 ? (b / 1e6).toFixed(1).replace('.', ',') + ' МБ' : Math.max(1, Math.round(b / 1e3)) + ' КБ';
+const plural = (n, a, b, c) => `${n} ${n % 10 === 1 && n % 100 !== 11 ? a : n % 10 >= 2 && n % 10 <= 4 && (n % 100 < 12 || n % 100 > 14) ? b : c}`;
+const KIND = { folder: 'Папка', image: 'Изображение', video: 'Видео', doc: 'Документ', link: 'Ссылка' };
+
+/* ───── состояние ───── */
+const S = {
+  folder: null, sel: new Set(), anchor: null, q: '',
+  filter: { tags: ['place:Грузия', 'place:Стамбул', 'theme:еда'], mode: 'cat', scope: 'vault' },
+  open: new Set([fTrips, fDocs]), catClosed: new Set(['status']), catFull: new Set(), tagQ: '', tagSort: 'count',
+  insp: window.innerWidth > 860, cardTags: false, size: 'm', sort: 'name', viewer: null, vinsp: true,
+  recent: ['status:избранное', 'theme:еда', 'people:Аня'], omni: [], omniIdx: 0,
+};
+const active = () => S.filter.tags.length > 0 || S.q !== '';
+function matches(e) {
+  if (S.q && !(e.name + ' ' + e.desc).toLowerCase().includes(S.q.toLowerCase())) return false;
+  const f = S.filter; if (!f.tags.length) return true;
+  const t = eff(e);
+  if (f.mode === 'all') return f.tags.every((x) => t.has(x));
+  if (f.mode === 'any') return f.tags.some((x) => t.has(x));
+  const g = {}; for (const x of f.tags) (g[TAGS.get(x).cat] ||= []).push(x);
+  return Object.values(g).every((a) => a.some((x) => t.has(x)));
+}
+function visible() {
+  let list = active()
+    ? E.filter((e) => e.kind !== 'folder' && matches(e) && (S.filter.scope === 'vault' || S.folder === null || isUnder(e, S.folder)))
+    : E.filter((e) => e.parent === S.folder);
+  const key = { name: (e) => e.name, size: (e) => -(e.size || 0), date: (e) => (e.date || '').split('.').reverse().join('') }[S.sort];
+  return list.sort((a, b) => (b.kind === 'folder') - (a.kind === 'folder') || (key(a) > key(b) ? 1 : key(a) < key(b) ? -1 : 0));
+}
+function targets() { if (S.viewer) return [S.viewer.ids[S.viewer.i]]; if (S.sel.size) return [...S.sel]; return S.folder ? [S.folder] : []; }
+
+/* ───── миниатюры ───── */
+function thumb(e, big) {
+  const h = e.hue ?? 230, n = parseInt(e.id.slice(1), 10), sx = 22 + (n * 37) % 76, flip = n % 2 ? 'scale(-1,1)' : '';
+  const scene = `<svg class="scene" viewBox="0 0 120 90" preserveAspectRatio="none"><g transform-origin="60 45" transform="${flip}"><circle cx="${sx}" cy="${20 + n % 14}" r="8" fill="hsl(${h + 32} 85% 80% / .5)"/><path d="M0 90V${58 + n % 9}L${22 + n % 10} 40l22 ${18 + n % 6}L70 ${28 + n % 12}l28 28 22-14v48z" fill="hsl(${h} 38% 15% / .75)"/><path d="M0 90V76l30-16 28 16 28-14 34 18v10z" fill="hsl(${h} 42% 9% / .85)"/></g></svg>`;
+  const bg = `background:linear-gradient(${150 + n % 50}deg,hsl(${h} 48% ${34 + n % 8}%),hsl(${h + 46} 52% 17%))`;
+  if (e.kind === 'folder') return `<div class="thumb" style="background:#16162a;color:var(--accent2)">${ic('folder', big ? 72 : 46)}</div>`;
+  if (e.kind === 'doc') return `<div class="thumb" style="background:#22222a"><div class="paper"><b></b><b></b><b></b><b style="width:70%"></b><b></b><b style="width:45%"></b></div></div>`;
+  if (e.kind === 'link') return `<div class="thumb" style="background:linear-gradient(160deg,#1c2433,#11131b);color:#93a4c4">${ic('globe', big ? 56 : 34)}<span class="dom">${esc(e.dom)}</span></div>`;
+  if (e.kind === 'video') return `<div class="thumb" style="${bg}">${scene}<span class="play">${ic('play', 16)}</span><span class="dur">${e.dur}</span></div>`;
+  return `<div class="thumb" style="${bg}">${scene}</div>`;
+}
+
+/* ───── панели «Папки» и «Теги»: видны обе, расставляются перетаскиванием ───── */
+const PANELS = { folders: { title: 'Папки', icon: 'folder' }, tags: { title: 'Теги', icon: 'tag' } };
+const PRESETS = {
+  stack: ['Друг под другом слева', 'папки сверху, теги снизу, граница тянется', { left: { mode: 'stack', items: ['folders', 'tags'] }, right: { mode: 'stack', items: [] } }],
+  cols: ['Две колонки слева', 'папки и теги рядом, каждой своя ширина', { left: { mode: 'cols', items: ['folders', 'tags'] }, right: { mode: 'stack', items: [] } }],
+  apart: ['Папки слева, теги справа', 'теги между галереей и свойствами', { left: { mode: 'stack', items: ['folders'] }, right: { mode: 'stack', items: ['tags'] } }],
+};
+const SIZE_DEFAULT = { dwleft: 260, dwright: 250, splitleft: 0.42, splitright: 0.5, pwfolders: 230, pwtags: 250 };
+const clone = (v) => JSON.parse(JSON.stringify(v));
+function load(key, fallback) { try { const v = JSON.parse(localStorage.getItem(key)); return v && typeof v === 'object' ? v : clone(fallback); } catch { return clone(fallback); } }
+function save(key, v) { try { localStorage.setItem(key, JSON.stringify(v)); } catch {} }
+function validLayout(l) {
+  try { const all = [...l.left.items, ...l.right.items]; return all.length === 2 && all.includes('folders') && all.includes('tags') && ['stack', 'cols'].includes(l.left.mode) && ['stack', 'cols'].includes(l.right.mode); } catch { return false; }
+}
+S.layout = (() => { const l = load('sbx_mock_layout', PRESETS.stack[2]); return validLayout(l) ? l : clone(PRESETS.stack[2]); })();
+S.sz = { ...SIZE_DEFAULT, ...load('sbx_mock_sizes', {}) };
+S.collapsed = new Set();
+const currentPreset = () => Object.keys(PRESETS).find((k) => JSON.stringify(PRESETS[k][2]) === JSON.stringify(S.layout));
+function applySizes() { const st = $('#body').style; for (const [k, v] of Object.entries(S.sz)) st.setProperty('--' + k, k.startsWith('split') ? String(v) : v + 'px'); }
+function saveLayout() { save('sbx_mock_layout', S.layout); }
+
+function folderBody() {
+  const node = (f, depth) => {
+    const kids = E.filter((e) => e.kind === 'folder' && e.parent === f.id), open = S.open.has(f.id);
+    return `<button class="node ${S.folder === f.id ? 'on' : ''}" style="padding-left:${8 + depth * 16}px" data-act="nav" data-id="${f.id}">
+      <span class="chev ${open ? 'open' : ''}" data-act="twist" data-id="${f.id}" style="${kids.length ? '' : 'visibility:hidden'}">${ic('chev', 12)}</span>${ic('folder', 15)}<span class="nm">${esc(f.name)}</span><span class="cnt">${filesUnder(f.id)}</span></button>` + (open ? kids.map((k) => node(k, depth + 1)).join('') : '');
+  };
+  return `<div class="sidescroll" data-keep="folders"><button class="node ${S.folder === null ? 'on' : ''}" data-act="nav" data-id="">${ic('lock', 15)}<span class="nm">Весь сейф</span><span class="cnt">${E.filter((e) => e.kind !== 'folder').length}</span></button>${E.filter((e) => e.kind === 'folder' && e.parent === null).map((f) => node(f, 0)).join('')}</div>
+    <div class="sidefoot"><button class="foot" data-act="mock" data-msg="Корзина — отдельный экран, как сейчас">${ic('trash', 15)}<span class="nm">Корзина</span><span class="cnt">3</span></button></div>`;
+}
+function tagBody() {
+  const q = S.tagQ.trim().toLowerCase(), sel = new Set(S.filter.tags);
+  const row = (t) => `<div class="trow ${sel.has(t.id) ? 'on' : ''}" role="button" tabindex="0" data-act="toggle-tag" data-tag="${t.id}"><span class="tick">${ic('check', 11)}</span><span class="nm">${esc(t.name)}</span><span class="cnt">${t.count}</span><span class="more" data-act="tag-more" data-tag="${t.id}" title="Переименовать, слить, удалить">${ic('dots', 14)}</span></div>`;
+  let body = '';
+  for (const c of CATS) {
+    let tags = c.tags.map((nm) => TAGS.get(`${c.id}:${nm}`));
+    tags.sort(S.tagSort === 'count' ? (a, b) => b.count - a.count : (a, b) => a.name.localeCompare(b.name, 'ru'));
+    if (q) { tags = tags.filter((t) => t.name.toLowerCase().includes(q) || c.name.toLowerCase().includes(q)); if (!tags.length) continue; }
+    const closed = !q && S.catClosed.has(c.id), full = q || S.catFull.has(c.id), lim = 6;
+    body += `<button class="chead" data-act="cat" data-cat="${c.id}"><span class="chev ${closed ? '' : 'open'}">${ic('chev', 11)}</span><span class="nm">${c.name}</span>${closed && tags.some((t) => sel.has(t.id)) ? '<span class="dot"></span>' : ''}<span class="cnt">${tags.length}</span></button>`;
+    if (closed) continue;
+    // выбранные не прячутся за «ещё N»
+    const shown = full ? tags : tags.filter((t, i) => i < lim || sel.has(t.id));
+    body += shown.map(row).join('');
+    if (!q && tags.length > lim) body += `<button class="morerow" data-act="cat-full" data-cat="${c.id}">${full ? 'Свернуть' : `Показать все ${tags.length}`}</button>`;
+  }
+  return `<div class="tsearch"><input id="tagQ" placeholder="Найти тег…" value="${esc(S.tagQ)}" autocomplete="off"><button data-act="tag-sort" title="Порядок тегов">${S.tagSort === 'count' ? 'частые' : 'А–Я'}</button></div>
+    <div class="sidescroll" data-keep="tags">${body || '<div class="empty">Такого тега нет</div>'}</div>
+    <div class="sidefoot"><button class="foot" data-act="mock" data-msg="Управление тегами: категории, слияние, язык имён (RU/EN)">${ic('gear', 15)}<span class="nm">Управление тегами</span></button></div>`;
+}
+function panelHTML(id, side, mode, idx, count) {
+  const canCollapse = mode === 'stack' && count > 1, collapsed = canCollapse && S.collapsed.has(id);
+  const n = S.filter.tags.length, badge = id === 'tags' && n ? `<span class="badge" title="Тегов в фильтре">${n}</span>` : '';
+  const inner = side === 'left' ? 'r' : 'l';
+  return `${mode === 'stack' && idx === 1 ? `<div class="hsplit" data-rz="split${side}" title="Потяните, чтобы поделить высоту"></div>` : ''}
+    <div class="panel ${collapsed ? 'collapsed' : ''}" data-panel="${id}" style="--pw:var(--pw${id})">
+      <div class="phead" data-drag="${id}" title="Перетащите заголовок на другую панель или к краю галереи">
+        ${canCollapse ? `<button class="ib sm" data-act="collapse" data-panel="${id}" title="${collapsed ? 'Развернуть' : 'Свернуть'}"><span class="chev ${collapsed ? '' : 'open'}">${ic('chev', 11)}</span></button>` : ''}
+        <span class="t">${ic(PANELS[id].icon, 13)}${PANELS[id].title}${badge}</span>
+        <span class="grip">${ic('grip', 14)}</span>
+        <button class="ib sm" data-act="layout-menu" title="Расположение панелей">${ic('dots', 14)}</button>
+      </div>
+      ${collapsed ? '' : id === 'folders' ? folderBody() : tagBody()}
+      ${mode === 'cols' ? `<div class="vsplit ${inner}" data-rz="pw${id}" data-side="${side}" title="Потяните, чтобы изменить ширину"></div>` : ''}
+    </div>`;
+}
+function renderDock(side) {
+  const d = S.layout[side], el = $(side === 'left' ? '#dockL' : '#dockR'), n = d.items.length, mode = n > 1 ? d.mode : 'stack';
+  const split = n > 1 && mode === 'stack' && !d.items.some((p) => S.collapsed.has(p));
+  el.className = `dock ${side} ${mode} ${split ? 'split' : ''}`;
+  el.style.cssText = `--dw:var(--dw${side});--split:var(--split${side})`;
+  el.hidden = n === 0;
+  el.innerHTML = d.items.map((p, i) => panelHTML(p, side, mode, i, n)).join('') +
+    (n && mode === 'stack' ? `<div class="vsplit ${side === 'left' ? 'r' : 'l'}" data-rz="dw${side}" data-side="${side}" title="Потяните, чтобы изменить ширину"></div>` : '');
+}
+function renderDocks() { renderDock('left'); renderDock('right'); }
+
+/* перенос панели: на другую панель (над, под, слева, справа от неё) или к краю галереи */
+function dockPanel(id, t) {
+  const L = S.layout, other = id === 'folders' ? 'tags' : 'folders';
+  for (const s of ['left', 'right']) L[s].items = L[s].items.filter((p) => p !== id);
+  if (t.kind === 'panel') {
+    const s = L.left.items.includes(other) ? 'left' : 'right', first = t.edge === 'top' || t.edge === 'left';
+    L[s].items = first ? [id, other] : [other, id];
+    L[s].mode = t.edge === 'top' || t.edge === 'bottom' ? 'stack' : 'cols';
+  } else {
+    const d = L[t.side];
+    if (d.items.length) { d.mode = 'cols'; d.items = t.side === 'left' ? [id, ...d.items] : [...d.items, id]; } else { d.mode = 'stack'; d.items = [id]; }
+  }
+  for (const s of ['left', 'right']) if (L[s].items.length < 2) L[s].mode = 'stack';
+  S.collapsed.delete(id); saveLayout(); render();
+}
+let drag = null, swallowClick = false;
+const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
+const inRect = (r, x, y) => x >= r.left && x <= r.right && y >= r.top && y <= r.bottom;
+function dropTarget(x, y) {
+  const other = drag.id === 'folders' ? 'tags' : 'folders', o = $(`[data-panel="${other}"]`), cr = $('.content').getBoundingClientRect();
+  const r = o.getBoundingClientRect();
+  if (inRect(r, x, y)) {
+    const dx = (x - r.left) / r.width, dy = (y - r.top) / r.height;
+    const edge = [['top', dy], ['bottom', 1 - dy], ['left', dx], ['right', 1 - dx]].sort((a, b) => a[1] - b[1])[0][0];
+    const pv = { top: [r.left, r.top, r.width, r.height / 2], bottom: [r.left, r.top + r.height / 2, r.width, r.height / 2], left: [r.left, r.top, r.width / 2, r.height], right: [r.left + r.width / 2, r.top, r.width / 2, r.height] }[edge];
+    const word = { top: 'Над', bottom: 'Под', left: 'Слева от', right: 'Справа от' }[edge];
+    return { kind: 'panel', edge, pv, label: `${word} панели «${PANELS[other].title}»` };
+  }
+  if (y >= cr.top && y <= cr.bottom && x >= cr.left && x < cr.left + 150) return { kind: 'edge', side: 'left', pv: [cr.left, cr.top, 250, cr.height], label: 'Колонкой слева от галереи' };
+  if (y >= cr.top && y <= cr.bottom && x <= cr.right && x > cr.right - 150) return { kind: 'edge', side: 'right', pv: [cr.right - 250, cr.top, 250, cr.height], label: 'Колонкой справа от галереи' };
+  return null;
+}
+function showZones(on) {
+  const cr = $('.content').getBoundingClientRect();
+  for (const [id, left] of [['#ezL', cr.left], ['#ezR', cr.right - 150]]) { const z = $(id); z.hidden = !on; Object.assign(z.style, { left: left + 'px', top: cr.top + 'px', width: '150px', height: cr.height + 'px' }); }
+}
+document.addEventListener('pointerdown', (ev) => {
+  if (ev.button !== 0) return;
+  const rz = ev.target.closest('[data-rz]');
+  if (rz) {
+    ev.preventDefault();
+    drag = { kind: 'rz', key: rz.dataset.rz, side: rz.dataset.side, x: ev.clientX, start: S.sz[rz.dataset.rz], dock: rz.closest('.dock') };
+    document.body.classList.add('resizing'); document.body.style.cursor = getComputedStyle(rz).cursor; rz.classList.add('on');
+    return;
+  }
+  const h = ev.target.closest('[data-drag]');
+  if (h && !ev.target.closest('button')) { ev.preventDefault(); drag = { kind: 'panel', id: h.dataset.drag, x: ev.clientX, y: ev.clientY, on: false, target: null }; }
+});
+document.addEventListener('pointermove', (ev) => {
+  if (!drag) return;
+  if (drag.kind === 'rz') {
+    const k = drag.key, dx = ev.clientX - drag.x;
+    if (k.startsWith('split')) { const r = drag.dock.getBoundingClientRect(); S.sz[k] = clamp((ev.clientY - r.top) / r.height, 0.12, 0.88); }
+    else S.sz[k] = clamp(drag.start + (drag.side === 'left' ? dx : -dx), 170, 520);
+    applySizes(); return;
+  }
+  if (!drag.on) {
+    if (Math.hypot(ev.clientX - drag.x, ev.clientY - drag.y) < 6) return;
+    drag.on = true; closePop(); document.body.classList.add('pdrag'); showZones(true);
+    $(`[data-panel="${drag.id}"]`).classList.add('lifted');
+    $('#ghost').innerHTML = ic(PANELS[drag.id].icon, 13) + PANELS[drag.id].title; $('#ghost').hidden = false;
+  }
+  Object.assign($('#ghost').style, { left: ev.clientX + 12 + 'px', top: ev.clientY + 12 + 'px' });
+  const t = (drag.target = dropTarget(ev.clientX, ev.clientY)), pv = $('#dropPv');
+  pv.hidden = !t;
+  if (t) { const [l, tp, w, hh] = t.pv; Object.assign(pv.style, { left: l + 'px', top: tp + 'px', width: w + 'px', height: hh + 'px' }); pv.textContent = t.label; }
+});
+function endDrag() {
+  if (!drag) return;
+  const d = drag; drag = null;
+  if (d.kind === 'rz') { save('sbx_mock_sizes', S.sz); document.body.classList.remove('resizing'); document.body.style.cursor = ''; document.querySelectorAll('[data-rz].on').forEach((x) => x.classList.remove('on')); }
+  else if (d.on) {
+    document.body.classList.remove('pdrag'); showZones(false); $('#ghost').hidden = true; $('#dropPv').hidden = true;
+    document.querySelectorAll('.lifted').forEach((x) => x.classList.remove('lifted'));
+    if (d.target) dockPanel(d.id, d.target);
+  } else return;
+  swallowClick = true; setTimeout(() => (swallowClick = false));
+}
+// mouseup и blur - запасной выход: отпускание вне окна не должно оставлять панель «в руке»
+for (const t of ['pointerup', 'pointercancel', 'mouseup']) document.addEventListener(t, endDrag);
+window.addEventListener('blur', endDrag);
+document.addEventListener('click', (ev) => { if (swallowClick) { swallowClick = false; ev.stopPropagation(); ev.preventDefault(); } }, true);
+document.addEventListener('dblclick', (ev) => { const rz = ev.target.closest('[data-rz]'); if (!rz) return; const k = rz.dataset.rz; S.sz[k] = SIZE_DEFAULT[k]; applySizes(); save('sbx_mock_sizes', S.sz); });
+
+/* ───── панель над галереей ───── */
+function renderBar(list) {
+  let crumbs;
+  if (active() && (S.filter.scope === 'vault' || S.folder === null)) crumbs = `<button class="cur">Результаты</button><span class="total">${plural(list.length, 'объект', 'объекта', 'объектов')} во всём сейфе</span>`;
+  else {
+    const path = []; let p = S.folder; while (p) { path.unshift(get(p)); p = get(p).parent; }
+    crumbs = [`<button data-act="nav" data-id="" class="${path.length ? '' : 'cur'}">Сейф</button>`, ...path.map((f, i) => `<button data-act="nav" data-id="${f.id}" class="${i === path.length - 1 ? 'cur' : ''}">${esc(f.name)}</button>`)].join('<span class="sep">›</span>') + `<span class="total">${plural(list.length, 'объект', 'объекта', 'объектов')}</span>`;
+  }
+  let right;
+  if (S.sel.size) {
+    right = `<span class="selinfo">Выбрано: ${S.sel.size}</span>
+      <button class="tb" data-act="mock" data-msg="Скачивание…">${ic('down')}Скачать</button>
+      <button class="tb" data-act="mock" data-msg="Диалог «Переместить в…»">${ic('move')}Переместить</button>
+      ${S.sel.size === 1 ? `<button class="tb" data-act="mock" data-msg="Переименование на месте (F2)">${ic('edit')}Имя</button>` : ''}
+      <button class="tb danger" data-act="del">${ic('trash')}В корзину</button>
+      <button class="ib" data-act="clear-sel" title="Снять выделение (Esc)">${ic('x')}</button>`;
+  } else {
+    right = `<select id="sortSel" title="Сортировка"><option value="name">По имени</option><option value="date">По дате</option><option value="size">По размеру</option></select>
+      <div class="seg" title="Размер плиток">${['s', 'm', 'l'].map((z) => `<button class="${S.size === z ? 'on' : ''}" data-act="size" data-size="${z}">${z.toUpperCase()}</button>`).join('')}</div>
+      <button class="ib ${S.cardTags ? 'on' : ''}" data-act="card-tags" title="Теги на плитках: ${S.cardTags ? 'показаны' : 'скрыты'}">${ic('tag')}</button>`;
+  }
+  $('#bar').innerHTML = `<div class="crumbs">${crumbs}</div>${right}<button class="ib ${S.insp ? 'on' : ''}" data-act="insp" title="Свойства (Alt+Enter)">${ic('panel')}</button>`;
+  const ss = $('#sortSel'); if (ss) ss.value = S.sort;
+}
+
+const MODES = { cat: ['по категориям', '«или» внутри категории, «и» между ними'], all: ['все теги сразу', 'у объекта стоит каждый выбранный тег'], any: ['любой из тегов', 'достаточно одного совпадения'] };
+function renderFrow() {
+  const el = $('#frow'); el.hidden = !active(); if (!active()) return;
+  const f = S.filter, parts = [];
+  if (S.q) parts.push(`<span class="fgrp"><span class="gl">Имя</span><button class="ft" data-act="clear-q" title="Убрать">«${esc(S.q)}»${ic('x', 11)}</button></span>`);
+  const groups = []; for (const c of CATS) { const ts = f.tags.filter((t) => TAGS.get(t).cat === c.id); if (ts.length) groups.push([c, ts]); }
+  const inner = f.mode === 'all' ? 'и' : 'или', outer = f.mode === 'any' ? 'или' : 'и';
+  for (const [c, ts] of groups) parts.push(`<span class="fgrp"><span class="gl">${c.name}</span>${ts.map((t) => `<button class="ft" data-act="toggle-tag" data-tag="${t}" title="Убрать из фильтра">${esc(TAGS.get(t).name)}${ic('x', 11)}</button>`).join(`<i>${inner}</i>`)}</span>`);
+  el.innerHTML = parts.join(`<span class="joiner">${outer}</span>`) +
+    `<button class="ghost" data-act="focus-omni">${ic('plus', 12)}тег</button><span class="sp"></span>
+     <button class="link" data-act="mode-menu" title="Как сочетать теги">Сочетание: ${MODES[f.mode][0]} ▾</button>
+     <div class="seg"><button class="${f.scope === 'vault' ? 'on' : ''}" data-act="scope" data-scope="vault">Весь сейф</button><button class="${f.scope === 'folder' ? 'on' : ''}" data-act="scope" data-scope="folder" title="${S.folder ? 'Вместе с вложенными папками' : 'Щёлкните папку в панели «Папки»'}">${S.folder ? 'В «' + esc(get(S.folder).name) + '»' : 'В папке'}</button></div>
+     <button class="link" data-act="reset">Сбросить</button>`;
+}
+
+function renderGrid(list) {
+  const g = $('#grid');
+  g.style.setProperty('--tile', { s: '124px', m: '168px', l: '230px' }[S.size]);
+  g.classList.toggle('anysel', S.sel.size > 0);
+  if (!list.length) { g.innerHTML = ''; g.insertAdjacentHTML('beforeend', `<div class="blank" style="grid-column:1/-1"><b>Ничего не найдено</b>${active() ? 'Уберите один из тегов в строке фильтра или смените «Сочетание».' : 'Папка пуста — перетащите сюда файлы.'}</div>`); return; }
+  g.innerHTML = list.map((e) => {
+    const cap = e.kind === 'folder' ? plural(filesUnder(e.id), 'объект', 'объекта', 'объектов') : e.kind === 'link' ? e.dom : `${fmtSize(e.size)} · ${e.date}`;
+    let tags = '';
+    if (S.cardTags) { const ts = [...eff(e)]; tags = `<div class="ctags">${ts.slice(0, 2).map((t) => `<span class="mini">${esc(TAGS.get(t).name)}</span>`).join('')}${ts.length > 2 ? `<span class="mini">+${ts.length - 2}</span>` : ''}</div>`; }
+    return `<div class="card ${S.sel.has(e.id) ? 'sel' : ''}" data-act="card" data-id="${e.id}"><button class="cb" data-act="check" data-id="${e.id}" title="Выбрать">${ic('check', 12)}</button>${thumb(e)}<div class="title" title="${esc(e.name)}">${esc(e.name)}</div><div class="cap">${cap}</div>${tags}</div>`;
+  }).join('');
+}
+
+/* ───── свойства: одно место для тегов одной записи и многих ───── */
+function tagStats(es) {
+  const m = new Map(); const up = (t) => m.get(t) || (m.set(t, { tag: t, direct: 0, inh: 0, from: null, inheritOn: 0 }), m.get(t));
+  for (const e of es) {
+    for (const d of e.direct) { const s = up(d.tag); s.direct++; if (d.inherit) s.inheritOn++; }
+    for (const i of inherited(e)) if (!e.direct.some((d) => d.tag === i.tag)) { const s = up(i.tag); s.inh++; s.from = i.from; }
+  }
+  return m;
+}
+function inspHTML(ids, key) {
+  const es = ids.map(get);
+  if (!es.length) return `<div class="blank"><b>Ничего не выбрано</b>Щёлкните по плитке — здесь появятся её теги, описание и сведения.</div>`;
+  const one = es.length === 1 ? es[0] : null, stats = tagStats(es);
+  let head;
+  if (one) head = `<div class="pv">${thumb(one, true)}</div>
+      <div><h2>${esc(one.name)}</h2><div class="sub">${KIND[one.kind]}${one.kind === 'folder' ? ' · ' + plural(filesUnder(one.id), 'объект', 'объекта', 'объектов') : one.size ? ' · ' + fmtSize(one.size) : ''}${!S.sel.size && !S.viewer ? ' · открытая папка' : ''}</div></div>`;
+  else head = `<div class="stack">${es.slice(0, 3).map((e, i) => thumb(e).replace('class="thumb" style="', `class="thumb" style="transform:rotate(${(i - 1) * 5}deg) translateY(${Math.abs(i - 1) * 6}px);z-index:${i === 1 ? 2 : 1};`)).join('')}</div>
+      <div><h2>Выбрано: ${es.length}</h2><div class="sub">${fmtSize(es.reduce((a, e) => a + (e.size || 0), 0))} · теги ниже меняются сразу у всех</div></div>`;
+  let rows = '';
+  for (const c of CATS) {
+    const ss = [...stats.values()].filter((s) => TAGS.get(s.tag).cat === c.id); if (!ss.length) continue;
+    rows += `<span class="cl">${c.name}</span><div class="chips">${ss.map((s) => {
+      const total = s.direct + s.inh, part = total < es.length, inh = s.direct === 0;
+      return `<button class="chip ${part ? 'part' : inh ? 'inh' : ''}" data-act="chip" data-tag="${s.tag}" data-key="${key}" title="${part ? `Стоит у ${total} из ${es.length}` : inh ? 'Унаследован от папки «' + esc(get(s.from).name) + '»' : s.inheritOn ? 'Действует и на вложенное' : ''}">${inh && !part ? ic('inh', 12) : ''}${esc(TAGS.get(s.tag).name)}${part ? `<small>${total}/${es.length}</small>` : s.inheritOn ? `<small title="Действует на вложенное">↓</small>` : ''}</button>`;
+    }).join('')}</div>`;
+  }
+  const folderOnly = es.every((e) => e.kind === 'folder');
+  return `${head}
+    <section class="sec" data-sec="tags"><h3>${ic('tag', 13)}Теги</h3>
+      ${rows ? `<div class="trows">${rows}</div>` : '<div class="hint" style="margin:0 0 8px">Тегов пока нет</div>'}
+      <div class="addtag">${ic('plus', 13)}<input id="addtag-${key}" data-role="addtag" data-key="${key}" autocomplete="off" placeholder="Добавить тег…"></div>
+      ${folderOnly ? '<div class="hint">Теги папки действуют на всё вложенное. Отключается в меню тега.</div>' : ''}
+    </section>
+    ${one ? `<section class="sec"><h3>Описание</h3><textarea id="desc-${key}" data-role="desc" data-id="${one.id}" placeholder="Заметки об этой записи">${esc(one.desc)}</textarea></section>
+    <section class="sec"><h3>Сведения</h3><dl><dt>Тип</dt><dd>${KIND[one.kind]}</dd>${one.size ? `<dt>Размер</dt><dd>${fmtSize(one.size)}</dd>` : ''}${one.date ? `<dt>Изменено</dt><dd>${one.date}</dd>` : ''}${one.dom ? `<dt>Адрес</dt><dd>https://${esc(one.dom)}/…</dd>` : ''}<dt>Папка</dt><dd>${one.parent ? esc(get(one.parent).name) : 'Сейф'}</dd></dl></section>` : ''}`;
+}
+
+function renderViewer() {
+  const v = $('#viewer'); v.hidden = !S.viewer; if (!S.viewer) { v.innerHTML = ''; return; }
+  const e = get(S.viewer.ids[S.viewer.i]);
+  v.innerHTML = `<div class="vmain"><div class="vtop"><span class="nm">${esc(e.name)}</span><span class="cnt">${S.viewer.i + 1} / ${S.viewer.ids.length}</span><span style="flex:1"></span>
+      <button class="ib" data-act="del" title="В корзину (Delete)">${ic('trash')}</button><button class="ib ${S.vinsp ? 'on' : ''}" data-act="vinsp" title="Свойства и теги">${ic('panel')}</button><button class="ib" data-act="vclose" title="Закрыть (Esc)">${ic('x')}</button></div>
+    <div class="vstage"><button class="vnav" data-act="vstep" data-d="-1" style="transform:scaleX(-1)">${ic('chev', 22)}</button>${thumb(e, true)}<button class="vnav" data-act="vstep" data-d="1">${ic('chev', 22)}</button></div></div>
+    ${S.vinsp ? `<aside class="insp vinsp">${inspHTML([e.id], 'v')}</aside>` : ''}`;
+}
+
+function render() {
+  const scrolls = {}; document.querySelectorAll('[data-keep]').forEach((x) => (scrolls[x.dataset.keep] = x.scrollTop));
+  const a = document.activeElement, keep = a && a.id && a.id !== 'omni' ? { id: a.id, s: a.selectionStart } : null;
+  recount();
+  const list = visible();
+  for (const id of [...S.sel]) if (!list.some((e) => e.id === id)) S.sel.delete(id);
+  renderDocks(); renderBar(list); renderFrow(); renderGrid(list);
+  const insp = $('#insp'); insp.hidden = !S.insp; if (S.insp) insp.innerHTML = inspHTML(S.viewer ? [] : targets(), 'm');
+  renderViewer();
+  document.querySelectorAll('[data-keep]').forEach((x) => { if (scrolls[x.dataset.keep] !== undefined) x.scrollTop = scrolls[x.dataset.keep]; });
+  $('#status').innerHTML = `<span>archive.safebox</span><span>${E.filter((e) => e.kind !== 'folder').length} объектов · 1,6 ГБ</span><span class="sp"></span><span>Щелчок — выбрать · двойной — открыть · Ctrl/Shift — несколько · / — поиск</span>`;
+  if (keep) { const el = document.getElementById(keep.id); if (el) { el.focus(); try { el.setSelectionRange(keep.s, keep.s); } catch {} } }
+}
+
+/* ───── поповеры ───── */
+let popAnchor = null;
+function openPop(anchor, html, w) {
+  const p = $('#pop'); p.innerHTML = html; p.hidden = false; popAnchor = anchor;
+  const r = anchor.getBoundingClientRect(); p.style.width = w ? w + 'px' : 'auto'; p.style.minWidth = Math.min(r.width, 320) + 'px';
+  p.style.left = Math.max(8, Math.min(r.left, innerWidth - p.offsetWidth - 8)) + 'px';
+  let top = r.bottom + 5; if (top + p.offsetHeight > innerHeight - 8) top = Math.max(8, r.top - p.offsetHeight - 5);
+  p.style.top = top + 'px';
+}
+function closePop() { $('#pop').hidden = true; popAnchor = null; }
+let toastT;
+function toast(msg) { const t = $('#toast'); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => (t.hidden = true), 2400); }
+const tagItem = (t, act, extra = '') => `<button class="pi" data-act="${act}" data-tag="${t.id}" ${extra}><span><span class="c">${t.catName}:</span> ${esc(t.name)}</span><span class="r">${t.count}</span></button>`;
+
+function omniPop() {
+  const inp = $('#omni'), q = inp.value.trim().toLowerCase(), sel = new Set(S.filter.tags);
+  const all = [...TAGS.values()].filter((t) => !sel.has(t.id));
+  const tags = q ? all.filter((t) => t.name.toLowerCase().includes(q) || t.catName.toLowerCase().startsWith(q)).sort((a, b) => a.name.toLowerCase().indexOf(q) - b.name.toLowerCase().indexOf(q) || b.count - a.count).slice(0, 7) : all.sort((a, b) => b.count - a.count).slice(0, 6);
+  S.omni = tags.map((t) => ({ tag: t.id })); if (q) S.omni.push({ q: inp.value.trim() });
+  S.omniIdx = Math.min(S.omniIdx, S.omni.length - 1);
+  let h = tags.length ? `<div class="ph">${q ? 'Теги' : 'Частые теги'}</div>` : '';
+  h += tags.map((t, i) => tagItem(t, 'omni-tag').replace('class="pi"', `class="pi ${i === S.omniIdx ? 'act' : ''}"`)).join('');
+  if (q) h += `${tags.length ? '<hr>' : ''}<button class="pi ${S.omniIdx === tags.length ? 'act' : ''}" data-act="omni-name">${ic('search', 14)}<span>Искать «${esc(inp.value.trim())}» в именах и описаниях</span><span class="r">Enter</span></button>`;
+  openPop($('#omniBox'), h, $('#omniBox').offsetWidth);
+}
+function omniPick(i) {
+  const it = S.omni[i]; if (!it) return; const inp = $('#omni');
+  if (it.tag) { S.filter.tags.push(it.tag); inp.value = ''; S.omniIdx = 0; render(); omniPop(); }
+  else { S.q = it.q; inp.value = ''; inp.blur(); closePop(); render(); }
+}
+function addPop(inp) {
+  const es = targets().map(get), q = inp.value.trim().toLowerCase();
+  const has = (t) => es.every((e) => e.direct.some((d) => d.tag === t.id));
+  const all = [...TAGS.values()].filter((t) => !has(t));
+  let h = '';
+  if (!q) {
+    const rec = S.recent.map((id) => TAGS.get(id)).filter((t) => !has(t));
+    if (rec.length) h += `<div class="ph">Недавние</div>` + rec.map((t) => tagItem(t, 'add-tag')).join('');
+    h += `<div class="ph">Частые</div>` + all.filter((t) => !S.recent.includes(t.id)).sort((a, b) => b.count - a.count).slice(0, 6).map((t) => tagItem(t, 'add-tag')).join('');
+  } else {
+    const m = all.filter((t) => t.name.toLowerCase().includes(q)).slice(0, 8);
+    h += m.map((t) => tagItem(t, 'add-tag')).join('');
+    if (![...TAGS.values()].some((t) => t.name.toLowerCase() === q)) h += `${m.length ? '<hr>' : ''}<div class="ph">Создать «${esc(inp.value.trim())}» в категории</div>` + CATS.map((c) => `<button class="pi" data-act="create-tag" data-cat="${c.id}" data-name="${esc(inp.value.trim())}">${ic('plus', 13)}${c.name}</button>`).join('');
+  }
+  openPop(inp, h, inp.offsetWidth);
+}
+function doAdd(tag) {
+  for (const e of targets().map(get)) if (!e.direct.some((d) => d.tag === tag)) e.direct.push({ tag, inherit: e.kind === 'folder' });
+  S.recent = [tag, ...S.recent.filter((t) => t !== tag)].slice(0, 4);
+  const key = S.viewer ? 'v' : 'm'; closePop(); render();
+  const inp = document.getElementById('addtag-' + key); if (inp) { inp.focus(); addPop(inp); }
+}
+
+/* ───── действия ───── */
+const ACT = {
+  // при включённом фильтре щелчок по папке не сбрасывает его, а сужает до этой папки
+  nav: (d) => { S.folder = d.id || null; S.sel.clear(); if (active()) S.filter.scope = S.folder ? 'folder' : 'vault'; if (S.folder) { let p = get(S.folder).parent; while (p) { S.open.add(p); p = get(p).parent; } } render(); },
+  twist: (d, el, ev) => { ev.stopPropagation(); S.open.has(d.id) ? S.open.delete(d.id) : S.open.add(d.id); render(); },
+  cat: (d) => { S.catClosed.has(d.cat) ? S.catClosed.delete(d.cat) : S.catClosed.add(d.cat); render(); },
+  'cat-full': (d) => { S.catFull.has(d.cat) ? S.catFull.delete(d.cat) : S.catFull.add(d.cat); render(); },
+  'tag-sort': () => { S.tagSort = S.tagSort === 'count' ? 'alpha' : 'count'; render(); },
+  'toggle-tag': (d) => { const i = S.filter.tags.indexOf(d.tag); i < 0 ? S.filter.tags.push(d.tag) : S.filter.tags.splice(i, 1); render(); },
+  'tag-more': (d, el, ev) => { ev.stopPropagation(); const t = TAGS.get(d.tag); openPop(el, `<div class="ph">${t.catName}: ${esc(t.name)}</div>${['Переименовать', 'Слить с другим тегом…', 'Перенести в категорию…'].map((x) => `<button class="pi" data-act="mock" data-msg="${x} — на месте, без отдельного экрана">${x}</button>`).join('')}<hr><button class="pi danger" data-act="mock" data-msg="Удаление тега — с подтверждением">Удалить тег</button>`); },
+  card: (d, el, ev) => {
+    // двойной щелчок: плитки перерисовываются после первого, поэтому ловим его по счётчику кликов
+    if (ev.detail === 2) { const e = get(d.id); if (e.kind === 'folder') return ACT.nav({ id: e.id }); const ids = visible().filter((x) => x.kind !== 'folder').map((x) => x.id); S.viewer = { ids, i: ids.indexOf(e.id) }; return render(); }
+    const list = visible().map((e) => e.id);
+    if (ev.shiftKey && S.anchor) { const a = list.indexOf(S.anchor), b = list.indexOf(d.id); if (!ev.ctrlKey) S.sel.clear(); for (let i = Math.min(a, b); i <= Math.max(a, b); i++) S.sel.add(list[i]); }
+    else if (ev.ctrlKey || ev.metaKey) { S.sel.has(d.id) ? S.sel.delete(d.id) : S.sel.add(d.id); S.anchor = d.id; }
+    else { S.sel = new Set([d.id]); S.anchor = d.id; }
+    render();
+  },
+  check: (d, el, ev) => { ev.stopPropagation(); S.sel.has(d.id) ? S.sel.delete(d.id) : S.sel.add(d.id); S.anchor = d.id; render(); },
+  'clear-sel': () => { S.sel.clear(); render(); },
+  del: () => { toast(`В корзину: ${S.viewer ? 1 : S.sel.size} · Ctrl+Z — вернуть`); },
+  size: (d) => { S.size = d.size; render(); },
+  'card-tags': () => { S.cardTags = !S.cardTags; render(); },
+  insp: () => { S.insp = !S.insp; render(); },
+  scope: (d) => { if (d.scope === 'folder' && !S.folder) return toast('Сначала откройте папку в панели «Папки»'); S.filter.scope = d.scope; render(); },
+  reset: () => { S.filter.tags = []; S.q = ''; render(); },
+  'clear-q': () => { S.q = ''; render(); },
+  'focus-omni': () => { $('#omni').focus(); },
+  'mode-menu': (d, el) => openPop(el, Object.entries(MODES).map(([k, [n, hint]]) => `<button class="pi" data-act="mode" data-mode="${k}"><span style="width:14px">${S.filter.mode === k ? ic('check', 13) : ''}</span><span>${cap(n)}<span class="d">${hint}</span></span></button>`).join('')),
+  mode: (d) => { S.filter.mode = d.mode; closePop(); render(); },
+  'omni-tag': (d) => omniPick(S.omni.findIndex((x) => x.tag === d.tag)),
+  'omni-name': () => omniPick(S.omni.length - 1),
+  'add-tag': (d) => doAdd(d.tag),
+  'create-tag': (d) => { const c = CATS.find((x) => x.id === d.cat), id = `${c.id}:${d.name}`; if (!TAGS.has(id)) { c.tags.push(d.name); TAGS.set(id, { id, cat: c.id, catName: c.name, name: d.name, count: 0 }); } doAdd(id); toast(`Создан тег «${d.name}» в категории «${c.name}»`); },
+  chip: (d, el) => {
+    const es = targets().map(get), s = tagStats(es).get(d.tag), t = TAGS.get(d.tag), total = s.direct + s.inh;
+    let h = `<div class="ph">${t.catName}: ${esc(t.name)}</div><button class="pi" data-act="only-tag" data-tag="${t.id}">${ic('search', 14)}Показать все с этим тегом<span class="r">${t.count}</span></button>`;
+    if (active() && !S.filter.tags.includes(t.id)) h += `<button class="pi" data-act="plus-tag" data-tag="${t.id}">${ic('plus', 14)}Добавить к текущему фильтру</button>`;
+    if (total < es.length) h += `<button class="pi" data-act="add-tag" data-tag="${t.id}">${ic('check', 14)}Поставить всем выбранным (${es.length})</button>`;
+    if (s.direct && es.some((e) => e.kind === 'folder')) h += `<button class="pi" data-act="inherit" data-tag="${t.id}"><span style="width:16px">${s.inheritOn ? ic('check', 14) : ''}</span>Действует на вложенное</button>`;
+    if (s.inh) h += `<button class="pi" data-act="nav-src" data-id="${s.from}">${ic('folder', 14)}Перейти к папке «${esc(get(s.from).name)}»</button>`;
+    h += '<hr>' + (s.direct ? `<button class="pi danger" data-act="remove-tag" data-tag="${t.id}">${ic('x', 14)}Снять тег${es.length > 1 ? ' у выбранных' : ''}</button>` : `<div class="pnote">Тег унаследован от папки — снимается у неё.</div>`);
+    openPop(el, h);
+  },
+  'only-tag': (d) => { S.filter.tags = [d.tag]; S.q = ''; S.filter.scope = 'vault'; S.viewer = null; S.sel.clear(); closePop(); render(); },
+  'plus-tag': (d) => { S.filter.tags.push(d.tag); S.viewer = null; closePop(); render(); },
+  inherit: (d) => { const es = targets().map(get), on = es.some((e) => e.direct.some((x) => x.tag === d.tag && x.inherit)); for (const e of es) for (const x of e.direct) if (x.tag === d.tag && e.kind === 'folder') x.inherit = !on; closePop(); render(); },
+  'remove-tag': (d) => { for (const e of targets().map(get)) e.direct = e.direct.filter((x) => x.tag !== d.tag); closePop(); render(); },
+  'nav-src': (d) => { S.viewer = null; S.filter.tags = []; S.q = ''; closePop(); ACT.nav({ id: d.id }); },
+  vclose: () => { S.viewer = null; render(); },
+  vinsp: () => { S.vinsp = !S.vinsp; render(); },
+  vstep: (d) => { const n = S.viewer.ids.length; S.viewer.i = (S.viewer.i + Number(d.d) + n) % n; closePop(); render(); },
+  'add-menu': (d, el) => openPop(el, ['Файлы…', 'Папку целиком…', 'Ссылку (или просто Ctrl+V)', 'Закладки из браузера…', 'Следить за папкой на диске…', 'Новую папку'].map((x) => `<button class="pi" data-act="mock" data-msg="${x}">${x}</button>`).join('')),
+  settings: (d, el) => openPop(el, ['Язык тегов: RU / EN', 'Автоблокировка', 'Сменить пароль'].map((x) => `<button class="pi" data-act="mock" data-msg="${x}">${x}</button>`).join('')),
+  lock: () => toast('Сейф заблокирован бы :)'),
+  collapse: (d) => { S.collapsed.has(d.panel) ? S.collapsed.delete(d.panel) : S.collapsed.add(d.panel); render(); },
+  'layout-menu': (d, el) => { const cur = currentPreset(); openPop(el, '<div class="ph">Расположение панелей</div>' + Object.entries(PRESETS).map(([k, [n, hint]]) => `<button class="pi" data-act="preset" data-k="${k}"><span style="width:14px">${cur === k ? ic('check', 13) : ''}</span><span>${n}<span class="d">${hint}</span></span></button>`).join('') + '<hr><div class="pnote">Или перетащите заголовок панели на другую панель или к краю галереи. Границы панелей тянутся мышью, двойной щелчок по границе — исходный размер.</div>', 290); },
+  preset: (d) => { S.layout = clone(PRESETS[d.k][2]); S.collapsed.clear(); saveLayout(); closePop(); render(); },
+  mock: (d) => { closePop(); toast(d.msg); },
+  notes: () => { const n = $('#notes'); n.hidden = !n.hidden; },
+};
+document.addEventListener('click', (ev) => {
+  const el = ev.target.closest('[data-act]');
+  if (!el) { if (ev.target.closest('#gridWrap') && S.sel.size) { S.sel.clear(); render(); } return; }
+  ACT[el.dataset.act]?.(el.dataset, el, ev);
+});
+document.addEventListener('mousedown', (ev) => {
+  if ($('#pop').hidden) return;
+  if (ev.target.closest('#pop')) { ev.preventDefault(); return; }
+  if (popAnchor && (popAnchor === ev.target || popAnchor.contains(ev.target))) return;
+  closePop();
+});
+document.addEventListener('input', (ev) => {
+  const t = ev.target;
+  if (t.id === 'omni') { S.omniIdx = 0; omniPop(); }
+  else if (t.id === 'tagQ') { S.tagQ = t.value; render(); }
+  else if (t.dataset.role === 'addtag') addPop(t);
+  else if (t.dataset.role === 'desc') get(t.dataset.id).desc = t.value;
+});
+document.addEventListener('change', (ev) => { if (ev.target.id === 'sortSel') { S.sort = ev.target.value; render(); } });
+document.addEventListener('focusin', (ev) => { if (ev.target.id === 'omni') omniPop(); else if (ev.target.dataset?.role === 'addtag') addPop(ev.target); });
+document.addEventListener('keydown', (ev) => {
+  const t = ev.target, typing = /INPUT|TEXTAREA|SELECT/.test(t.tagName);
+  if (t.id === 'omni') {
+    if (ev.key === 'ArrowDown' || ev.key === 'ArrowUp') { ev.preventDefault(); const n = S.omni.length; S.omniIdx = (S.omniIdx + (ev.key === 'ArrowDown' ? 1 : n - 1)) % n; omniPop(); }
+    else if (ev.key === 'Enter') omniPick(S.omniIdx);
+    else if (ev.key === 'Backspace' && t.value === '' && S.filter.tags.length) { S.filter.tags.pop(); render(); omniPop(); }
+    else if (ev.key === 'Escape') { t.value = ''; t.blur(); closePop(); }
+    return;
+  }
+  if (t.dataset?.role === 'addtag' && ev.key === 'Enter') { const first = $('#pop .pi[data-act="add-tag"]'); if (first) doAdd(first.dataset.tag); return; }
+  if ((ev.key === 'Enter' || ev.key === ' ') && t.classList?.contains('trow')) { ev.preventDefault(); t.click(); return; }
+  if (ev.key === 'Escape') { if (!$('#pop').hidden) { closePop(); if (typing) t.blur(); } else if (typing) t.blur(); else if (S.viewer) ACT.vclose(); else if (S.sel.size) ACT['clear-sel'](); return; }
+  if (typing) return;
+  if (ev.key === '/' || (ev.key === 'k' && ev.ctrlKey)) { ev.preventDefault(); $('#omni').focus(); }
+  else if (S.viewer && ev.key === 'ArrowRight') ACT.vstep({ d: 1 });
+  else if (S.viewer && ev.key === 'ArrowLeft') ACT.vstep({ d: -1 });
+  else if (ev.key === 'Delete' && (S.sel.size || S.viewer)) ACT.del();
+  else if (ev.key === 'a' && ev.ctrlKey) { ev.preventDefault(); S.sel = new Set(visible().map((e) => e.id)); render(); }
+});
+
+/* ───── пояснения ───── */
+const NOTES = [
+  ['#dockL', 'Папки и теги видны сразу, расставляются как удобно', 'Перетащите заголовок «Папки» или «Теги» на другую панель (над, под, рядом) или к краю галереи. Границы тянутся, расположение запоминается. Готовые варианты — в меню ⋯ на заголовке панели.'],
+  ['[data-panel="tags"]', 'Каталог тегов — один, списком', 'Было: одно и то же облако чипов слева под папками и ещё раз справа в «Фильтре». Стало: одна панель «Теги», строки со счётчиками, галочка = тег в фильтре. Щелчок по папке при включённом фильтре ищет внутри неё.'],
+  ['#omniBox', 'Поиск и фильтр — одна строка', 'Набираете «гру» → Enter добавляет тег; нет такого тега — ищет по именам. Отдельная панель фильтра и кнопка «Теги» в шапке больше не нужны.'],
+  ['#frow', 'Фильтр читается как фраза', '«Место: Грузия или Стамбул и Тема: еда» вместо радиокнопок «И между категориями, ИЛИ внутри». Режим и область — тут же.'],
+  ['#insp', 'Свойства — справа, теги — наверху', 'Сейчас панель слева между деревом и галереей, теги в самом низу. Здесь галерея не прыгает, теги сразу под именем.'],
+  ['#insp [data-sec="tags"]', 'Чип = одна мишень', 'Щелчок по тегу открывает меню (показать все / на вложенное / снять) вместо трёх мелких кнопок в чипе и галочки «Наследуется».'],
+  ['#insp', 'Один и много — одинаково', 'Выделите несколько плиток (Ctrl/Shift): та же панель, общие теги сплошные, частичные — «3/5». Отдельный поповер «Теги выделенных» не нужен.'],
+  ['#bar', 'Действия — в панели, плитки чистые', 'Скачать / Переместить / В корзину появляются вместо сортировки, ничего не перекрывает галерею. Теги на плитках — кнопка с биркой рядом с размером, по умолчанию скрыты.'],
+];
+$('#notes').innerHTML = '<h4>Что изменилось — наведите на пункт</h4>' + NOTES.map(([sel, t, d], i) => `<div class="n" data-hl="${esc(sel)}"><b>${i + 1}</b><span>${t}<em>${d}</em></span></div>`).join('');
+$('#notes').addEventListener('mouseover', (ev) => { const n = ev.target.closest('.n'); document.querySelectorAll('.hl').forEach((x) => x.classList.remove('hl')); if (n) $(n.dataset.hl)?.classList.add('hl'); });
+$('#notes').addEventListener('mouseleave', () => document.querySelectorAll('.hl').forEach((x) => x.classList.remove('hl')));
+
+$('#omniIcon').innerHTML = ic('search'); $('#addBtn').innerHTML = ic('plus', 14) + 'Добавить'; $('#gearBtn').innerHTML = ic('gear'); $('#lockBtn').innerHTML = ic('lock');
+applySizes();
+render();
+// стартовое состояние: выбран один результат, чтобы сразу была видна панель свойств
+const first = visible()[2]; if (first) { S.sel = new Set([first.id]); S.anchor = first.id; render(); }
+</script>
+</body>
+</html>

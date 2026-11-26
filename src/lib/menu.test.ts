@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import { makeEntry } from '../test/factories';
-import { menuItemsFor } from './menu';
+import { folderMenuItems, menuItemsFor } from './menu';
 
 const labels = (entry = makeEntry()) => menuItemsFor(entry).map((i) => i.label);
 
@@ -72,5 +72,34 @@ describe('menuItemsFor', () => {
     const items = menuItemsFor(makeEntry());
     expect(items.find((i) => i.action === 'delete')?.danger).toBe(true);
     expect(items.find((i) => i.action === 'properties')?.hint).toBe('Alt+Enter');
+  });
+});
+
+describe('folderMenuItems', () => {
+  const labels = (o: Parameters<typeof folderMenuItems>[0]) => folderMenuItems(o).map((i) => i.label);
+
+  it('«Все объекты» - только новая папка', () => {
+    expect(labels({ isRoot: true, placeDigit: undefined, placesFull: false })).toEqual(['Новая папка…']);
+  });
+
+  it('папка: полный набор; уже в «Местах» - «Убрать» с цифрой', () => {
+    expect(labels({ isRoot: false, placeDigit: undefined, placesFull: false })).toEqual([
+      'Открыть',
+      'Новая подпапка…',
+      'Переименовать…',
+      'Переместить…',
+      'Добавить в «Места»',
+      'Свойства и теги',
+      'Скачать ZIP',
+      'В корзину',
+    ]);
+    const place = folderMenuItems({ isRoot: false, placeDigit: 4, placesFull: true }).find((i) => i.action === 'place');
+    expect(place).toMatchObject({ label: 'Убрать из «Мест»', hint: '4' });
+    expect(place?.disabled).toBeUndefined();
+  });
+
+  it('все места заняты - «Добавить» недоступно', () => {
+    const place = folderMenuItems({ isRoot: false, placeDigit: undefined, placesFull: true }).find((i) => i.action === 'place');
+    expect(place?.disabled).toBe(true);
   });
 });

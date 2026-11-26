@@ -3,10 +3,12 @@ import type { DragEvent, MouseEvent } from 'react';
 import { keepPreviousData, useInfiniteQuery, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import {
   attachmentsZipUrlOf,
+  createFolders,
   deleteEntries,
   downloadUrlOf,
   getEntry,
   lockSafe,
+  moveEntries,
   refreshPreview,
   restoreFromTrash,
   updateEntry,
@@ -15,6 +17,7 @@ import type { PendingFile } from '../api/endpoints';
 import { ApiRequestError, errorMessage, isUnauthorized } from '../api/client';
 import {
   entryQuery,
+  foldersQuery,
   invalidateContent,
   listingQuery,
   patchCachedEntries,
@@ -32,8 +35,11 @@ import {
 } from '../lib/dom';
 import { dragKind, filesFromDataTransfer, linkTextFromDataTransfer, pastedFile } from '../lib/dnd';
 import { foldForSearch } from '../lib/fold';
+import { folderPaths } from '../lib/folderPaths';
 import { firstLine, plural } from '../lib/format';
-import type { MenuAction } from '../lib/menu';
+import { folderMenuItems } from '../lib/menu';
+import type { FolderMenuAction, MenuAction } from '../lib/menu';
+import { digitOfKey, isPlacesFull, placeAt, placeDigit, togglePlace as toggledPlaces } from '../lib/places';
 import { isNavKey } from '../lib/selection';
 import { EMPTY_FILTER, isFilterActive, pruneFilterTags, searchOptionsFor } from '../lib/tagFilter';
 import type { TagFilter } from '../lib/tagFilter';
@@ -49,6 +55,7 @@ import { useHeartbeat } from '../hooks/useHeartbeat';
 import { useImporter } from '../hooks/useImporter';
 import { useLinks } from '../hooks/useLinks';
 import { useMoveEntries } from '../hooks/useMoveEntries';
+import { usePlaces } from '../hooks/usePlaces';
 import { useRubberBand } from '../hooks/useRubberBand';
 import { useAllPages, usePreviewPoll } from '../hooks/usePagedContent';
 import { useSelection } from '../hooks/useSelection';
@@ -57,7 +64,7 @@ import { bumpThumbnail } from '../hooks/useThumbnailSrc';
 import { useWatchFolder } from '../hooks/useWatchFolder';
 import { ConfirmDialog } from './ConfirmDialog';
 import type { ConfirmRequest } from './ConfirmDialog';
-import { ContextMenu } from './ContextMenu';
+import { ContextMenu, MenuPopup } from './ContextMenu';
 import type { ContextMenuState } from './ContextMenu';
 import type { EntryCardHandlers } from './EntryCard';
 import { FolderTree } from './FolderTree';
@@ -67,8 +74,10 @@ import { IdleWarning } from './IdleWarning';
 import { ImportPanel } from './ImportPanel';
 import { LinkConfirm } from './LinkConfirm';
 import { isViewable, MediaViewer } from './MediaViewer';
+import type { PlaceChip } from './MediaViewer';
 import { anyModalOpen } from './Modal';
-import { MoveDialog } from './MoveDialog';
+import { MovePalette } from './MovePalette';
+import { NameDialog } from './NameDialog';
 import { NewTableDialog } from './NewTableDialog';
 import { PropertiesPanel } from './PropertiesPanel';
 import type { PropertiesTarget } from './PropertiesPanel';
@@ -87,6 +96,21 @@ import { restoreSummary, TrashView } from './TrashView';
 const SEARCH_DEBOUNCE_MS = 240; // UF-8
 const FRESH_MS = 3000; // сколько подсвечена новая ссылка
 const NO_FRESH: ReadonlySet<number> = new Set();
+
+/** Палитра «Переместить в…»: что перемещаем; done - ответ просмотрщику (перемещено ли). */
+interface PaletteState {
+  entries: Entry[];
+  done?: (moved: boolean) => void;
+}
+
+/** Отмена перемещения: id записей по папкам, где они лежали. */
+interface MoveUndo {
+  groups: [number | null, number[]][];
+}
+
+type NameRequest =
+  | { kind: 'create'; parentId: number | null; parentLabel: string }
+  | { kind: 'rename'; id: number; name: string };
 
 type Viewer =
   | { kind: 'media'; items: Entry[]; index: number } // фото, видео, ролики YouTube
@@ -228,7 +252,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   const tableRef = useRef<TableViewHandle | null>(null);
   const [confirm, setConfirm] = useState<ConfirmRequest | null>(null);
   const [propsOpen, setPropsOpen] = useState(false);
-  const [moveTargets, setMoveTargets] = useState<Entry[] | null>(null);
+  const [palette, setPalette] = useState<PaletteState | null>(null);
+  const [treeMenu, setTreeMenu] = useState<{ x: number; y: number; id: number | null } | null>(null);
+  const [nameRequest, setNameRequest] = useState<NameRequest | null>(null);
   const [focusTagsFor, setFocusTagsFor] = useState<number | null>(null); // «Теги…» из меню: поле ввода в панели
   const [reveal, setReveal] = useState<number | null>(null); // запись-источник тега: показать после перехода
   const [dragging, setDragging] = useState<'files' | 'link' | null>(null); // что тащат над окном
@@ -339,8 +365,26 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     [selectedEntries],
   );
 
+  // просмотрщик: удалённое или перемещённое убрать из ленты, следующее - на место
+  const dropFromViewer = useCallback((ids: readonly number[]) => {
+    setViewer((v) => {
+      if (v === null) return v;
+      if (v.kind !== 'media') return ids.includes(v.entry.id) ? null : v;
+      const gone = (p: Entry) => ids.includes(p.id);
+      if (!v.items.some(gone)) return v;
+      const items = v.items.filter((p) => !gone(p));
+      if (items.length === 0) return null;
+      // показываемое осталось - на нём; ушло - следующее уцелевшее после него (или последнее)
+      const after = v.items.slice(v.index).find((p) => !gone(p));
+      return { ...v, items, index: after === undefined ? items.length - 1 : items.indexOf(after) };
+    });
+  }, []);
+
   // последнее, что ушло в корзину: Ctrl+Z и «Отменить» в тосте возвращают
   const lastTrashed = useRef<number[] | null>(null);
+  // последнее перемещение; Ctrl+Z отменяет то, что было позже - удаление или перемещение
+  const lastMoved = useRef<MoveUndo | null>(null);
+  const lastAction = useRef<'trash' | 'move' | null>(null);
 
   const restoreMut = useMutation({
     mutationFn: (ids: number[]) => restoreFromTrash(ids),
@@ -374,23 +418,13 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     mutationFn: (ids: number[]) => deleteEntries(ids),
     onSuccess: (r, ids) => {
       lastTrashed.current = ids;
+      lastAction.current = 'trash';
       toast(`В корзину: ${plural(r.removed, 'объект', 'объекта', 'объектов')}`, 'success', {
         label: 'Отменить',
         onClick: () => undoDelete(ids),
       });
       clearSelection();
-      // просмотрщик: удалённое убрать из ленты, следующее - на место
-      setViewer((v) => {
-        if (v === null) return v;
-        if (v.kind !== 'media') return ids.includes(v.entry.id) ? null : v;
-        const gone = (p: Entry) => ids.includes(p.id);
-        if (!v.items.some(gone)) return v;
-        const items = v.items.filter((p) => !gone(p));
-        if (items.length === 0) return null;
-        // показываемое осталось - на нём; удалено - следующее уцелевшее после него (или последнее)
-        const after = v.items.slice(v.index).find((p) => !gone(p));
-        return { ...v, items, index: after === undefined ? items.length - 1 : items.indexOf(after) };
-      });
+      dropFromViewer(ids);
       // UF-10: удалённая открытая папка (или её предок) возвращает на родителя;
       // в режиме поиска меняем только папку «под» поиском, результаты не сбрасываем
       const back = folderPath === undefined ? undefined : folderAfterDelete(folderPath, new Set(ids));
@@ -511,7 +545,103 @@ function Shell({ onLocked }: { onLocked: () => void }) {
     },
   });
 
-  const dnd = useEntryDnd({ entries, selected: selection.selected, onMove: (m, p) => void moveEntriesTo(m, p) });
+  // «Места» на цифрах 1–9 и недавние папки назначения
+  const placesApi = usePlaces();
+  const { places } = placesApi;
+  const foldersData = useQuery(foldersQuery).data;
+  const pathById = useMemo(
+    () => new Map(folderPaths(foldersData?.folders ?? []).map((p) => [p.id, p])),
+    [foldersData],
+  );
+  const placeChips = useMemo<PlaceChip[]>(
+    () =>
+      places.flatMap((id, i) => {
+        const p = id === null ? undefined : pathById.get(id);
+        return p === undefined ? [] : [{ digit: i + 1, id: p.id, label: p.name, title: p.label }];
+      }),
+    [places, pathById],
+  );
+  const labelOf = (id: number | null) => (id === null ? 'Все объекты' : (pathById.get(id)?.label ?? 'папку'));
+
+  const togglePlace = useEvent((id: number) => {
+    const name = pathById.get(id)?.label ?? 'Папка';
+    const was = placeDigit(places, id);
+    if (!placesApi.togglePlace(id)) {
+      toast('Все 9 мест заняты — сначала уберите одно (★ в окне перемещения или правый клик в дереве)', 'info');
+      return;
+    }
+    if (was !== undefined) toast(`«${name}» убрана из «Мест»`, 'info');
+    else toast(`«${name}» — место ${placeDigit(toggledPlaces(places, id), id) ?? ''}: цифра перемещает сюда`, 'success');
+  });
+
+  const movesUndone = useRef(new WeakSet<MoveUndo>()); // «Отменить» в тосте после Ctrl+Z - уже нечего
+  const undoMove = useEvent(async (rec?: MoveUndo) => {
+    const r = rec ?? lastMoved.current;
+    if (r === null || movesUndone.current.has(r)) return;
+    movesUndone.current.add(r);
+    if (lastMoved.current === r) lastMoved.current = null;
+    try {
+      let n = 0;
+      for (const [parent, ids] of r.groups) {
+        const res = await moveEntries(ids, parent); // имя на старом месте заняли - сервер оставит оба
+        n += res.moved + res.replaced;
+      }
+      toast(`Возвращено на место: ${plural(n, 'объект', 'объекта', 'объектов')}`, 'success');
+    } catch (e) {
+      movesUndone.current.delete(r);
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось отменить перемещение'), 'error');
+    }
+    refreshContent();
+  });
+
+  // перемещение с тостом «… → «папка»» и «Отменить»; true - что-то переместилось
+  const moveTo = useEvent(async (moving: Entry[], parentId: number | null, label?: string): Promise<boolean> => {
+    const list = moving.filter((e) => e.parentId !== parentId);
+    if (list.length === 0) return false;
+    const groups = new Map<number | null, number[]>();
+    for (const e of list) {
+      const g = groups.get(e.parentId);
+      if (g === undefined) groups.set(e.parentId, [e.id]);
+      else g.push(e.id);
+    }
+    const rec: MoveUndo = { groups: [...groups] };
+    const result = await moveEntriesTo(list, parentId, {
+      label: label ?? labelOf(parentId),
+      undo: () => void undoMove(rec),
+    });
+    if (result === null || result.moved + result.replaced === 0) return false;
+    if (result.skipped === 0) {
+      lastMoved.current = rec;
+      lastAction.current = 'move';
+      dropFromViewer(list.map((e) => e.id));
+    }
+    if (parentId !== null && (pathById.has(parentId) || label !== undefined)) placesApi.addRecent(parentId);
+    return true;
+  });
+
+  // новая папка по пути от корня («Мемы/Коты») - и сразу туда
+  const createAndMove = useEvent(async (moving: Entry[], path: string): Promise<boolean> => {
+    let id: number | null | undefined;
+    try {
+      [id] = (await createFolders(null, [path])).ids;
+    } catch (e) {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось создать папку'), 'error');
+      return false;
+    }
+    if (id === null || id === undefined) return false;
+    void qc.invalidateQueries({ queryKey: foldersQuery.queryKey });
+    return moveTo(moving, id, path.split('/').join(' / '));
+  });
+
+  const openPalette = useEvent((list: Entry[], done?: (moved: boolean) => void) => {
+    if (list.length === 0) {
+      done?.(false);
+      return;
+    }
+    setPalette({ entries: list, done });
+  });
+
+  const dnd = useEntryDnd({ entries, selected: selection.selected, onMove: (m, p) => void moveTo(m, p) });
 
   // ── Свойства (UF-22) ──────────────────────────────────────────────────────
 
@@ -708,7 +838,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         setRenamingId(entry.id);
         break;
       case 'move':
-        setMoveTargets([entry]);
+        openPalette([entry]);
         break;
       case 'tags':
         openProperties(entry.id);
@@ -717,6 +847,50 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       case 'delete':
         requestDelete([entry.id]);
         break;
+    }
+  });
+
+  // ── Меню папки в дереве ───────────────────────────────────────────────────
+
+  const onTreeContextMenu = useCallback((e: MouseEvent, id: number | null) => {
+    e.preventDefault();
+    setTreeMenu({ x: e.clientX, y: e.clientY, id });
+  }, []);
+  const placeOfTree = useCallback((id: number) => placeDigit(places, id), [places]);
+
+  const runFolderAction = useEvent(async (action: FolderMenuAction, id: number | null) => {
+    if (action === 'newFolder') {
+      setNameRequest({ kind: 'create', parentId: id, parentLabel: labelOf(id) });
+      return;
+    }
+    if (id === null) return;
+    switch (action) {
+      case 'open':
+        navigateTree(id);
+        return;
+      case 'rename':
+        setNameRequest({ kind: 'rename', id, name: pathById.get(id)?.name ?? '' });
+        return;
+      case 'place':
+        togglePlace(id);
+        return;
+      case 'properties':
+        void openSource(id); // в родителя, папка выделена, свойства открыты
+        return;
+      case 'delete':
+        requestDelete([id]);
+        return;
+      case 'move':
+      case 'download':
+        break;
+    }
+    // дальше нужна сама запись папки
+    try {
+      const entry = await qc.fetchQuery({ ...entryQuery(id), staleTime: 0 });
+      if (action === 'move') openPalette([entry]);
+      else downloadEntry(entry);
+    } catch (e) {
+      if (!isUnauthorized(e)) toast(errorMessage(e, 'Не удалось открыть папку'), 'error');
     }
   });
 
@@ -768,8 +942,15 @@ function Shell({ onLocked }: { onLocked: () => void }) {
   useWindowEvent('keydown', (e) => {
     if (!(e.ctrlKey || e.metaKey) || e.shiftKey || e.altKey) return;
     if (e.key.toLowerCase() !== 'z' && e.code !== 'KeyZ') return;
-    if (e.defaultPrevented || isTypingTarget(e.target) || confirm !== null || menu !== null) return;
-    if (tagsOpen || (anyModalOpen() && viewer?.kind !== 'media')) return; // в диалогах Ctrl+Z не наш
+    if (e.defaultPrevented || isTypingTarget(e.target) || confirm !== null || menu !== null || treeMenu !== null) return;
+    if (tagsOpen || palette !== null || (anyModalOpen() && viewer?.kind !== 'media')) return; // в диалогах Ctrl+Z не наш
+    // отменяется последнее из двух: перемещение или удаление
+    if (lastMoved.current !== null && (lastAction.current === 'move' || lastTrashed.current === null)) {
+      e.preventDefault();
+      lastAction.current = null;
+      void undoMove();
+      return;
+    }
     if (lastTrashed.current === null) return;
     e.preventDefault();
     undoDelete();
@@ -777,6 +958,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
   useWindowEvent('keydown', (e) => {
     if (e.defaultPrevented || isTypingTarget(e.target) || anyModalOpen() || menu !== null || tagsOpen) return;
+    if (treeMenu !== null) return;
     if (trashOpen) return; // у корзины свои клавиши
     const { selected } = selection;
     const [first] = selected;
@@ -826,6 +1008,19 @@ function Shell({ onLocked }: { onLocked: () => void }) {
         return;
       }
       selection.selectAll();
+    } else if (!ctrl && !e.altKey && !e.shiftKey && digitOfKey(e.code) !== undefined) {
+      // 1–9: выделенное - в «Место» с этой цифрой
+      const target = placeAt(places, digitOfKey(e.code) ?? 0);
+      if (e.repeat || target === undefined || selectedEntries.length === 0) return;
+      e.preventDefault();
+      void moveTo(selectedEntries, target);
+    } else if (!ctrl && !e.altKey && e.code === 'KeyM') {
+      // M (на любой раскладке): «Переместить в…» для выделенного или того, что под курсором
+      const hovered = entries.find((en) => en.id === hoveredId.current);
+      const list = selectedEntries.length > 0 ? selectedEntries : hovered !== undefined ? [hovered] : [];
+      if (e.repeat || list.length === 0) return;
+      e.preventDefault();
+      openPalette(list);
     } else if (!ctrl && isNavKey(e.key)) {
       e.preventDefault();
       const id = selection.move(e.key, galleryRef.current?.columns() ?? 1, e.shiftKey);
@@ -963,6 +1158,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
                   expandPath={expandPath}
                   onNavigate={navigateTree}
                   dnd={dnd.tree}
+                  onContextMenu={onTreeContextMenu}
+                  placeOf={placeOfTree}
+                  menuFor={treeMenu === null ? undefined : treeMenu.id}
                 />
                 <div className="px-2 pt-1">
                   <button
@@ -1102,7 +1300,7 @@ function Shell({ onLocked }: { onLocked: () => void }) {
             if (id !== undefined) setRenamingId(id);
           }}
           onUniqueNames={askUniqueNames}
-          onMove={() => setMoveTargets(selectedEntries)}
+          onMove={() => openPalette(selectedEntries)}
           onProperties={() => openProperties(null)}
           onDelete={() => requestDelete([...selection.selected])}
           onClear={clearSelection}
@@ -1110,6 +1308,21 @@ function Shell({ onLocked }: { onLocked: () => void }) {
       )}
 
       {importer.progress !== null && <ImportPanel progress={importer.progress} />}
+
+      {treeMenu !== null && (
+        <MenuPopup
+          x={treeMenu.x}
+          y={treeMenu.y}
+          label={treeMenu.id === null ? 'Все объекты' : `Папка «${pathById.get(treeMenu.id)?.name ?? ''}»`}
+          items={folderMenuItems({
+            isRoot: treeMenu.id === null,
+            placeDigit: treeMenu.id === null ? undefined : placeDigit(places, treeMenu.id),
+            placesFull: isPlacesFull(places),
+          })}
+          onClose={() => setTreeMenu(null)}
+          onPick={(action) => void runFolderAction(action, treeMenu.id)}
+        />
+      )}
 
       {menu !== null && (
         <ContextMenu
@@ -1137,6 +1350,9 @@ function Shell({ onLocked }: { onLocked: () => void }) {
           }}
           onSavePatch={saveProperties}
           onDelete={(en) => requestDelete([en.id])}
+          places={placeChips}
+          onMoveTo={(en, parentId) => moveTo([en], parentId)}
+          onMovePick={(en) => new Promise<boolean>((resolve) => openPalette([en], resolve))}
         />
       )}
       {viewer?.kind === 'link' && <LinkConfirm entry={viewer.entry} onClose={() => setViewer(null)} />}
@@ -1159,11 +1375,49 @@ function Shell({ onLocked }: { onLocked: () => void }) {
 
       {confirm !== null && <ConfirmDialog request={confirm} onClose={() => setConfirm(null)} />}
 
-      {moveTargets !== null && (
-        <MoveDialog
-          entries={moveTargets}
-          onMove={(parentId) => void moveEntriesTo(moveTargets, parentId)}
-          onClose={() => setMoveTargets(null)}
+      {palette !== null && (
+        <MovePalette
+          entries={palette.entries}
+          places={places}
+          recent={placesApi.recent}
+          onTogglePlace={togglePlace}
+          onMove={(parentId) => {
+            setPalette(null);
+            void moveTo(palette.entries, parentId).then((ok) => palette.done?.(ok));
+          }}
+          onCreate={(path) => {
+            setPalette(null);
+            void createAndMove(palette.entries, path).then((ok) => palette.done?.(ok));
+          }}
+          onClose={() => {
+            setPalette(null);
+            palette.done?.(false);
+          }}
+        />
+      )}
+
+      {nameRequest?.kind === 'create' && (
+        <NameDialog
+          title={nameRequest.parentId === null ? 'Новая папка' : `Новая папка в «${nameRequest.parentLabel}»`}
+          submitLabel="Создать"
+          onSubmit={async (name) => {
+            await createFolders(nameRequest.parentId, [name]);
+            refreshContent();
+            toast(`Папка «${name}» создана`, 'success');
+          }}
+          onClose={() => setNameRequest(null)}
+        />
+      )}
+      {nameRequest?.kind === 'rename' && (
+        <NameDialog
+          title="Переименовать папку"
+          initial={nameRequest.name}
+          submitLabel="Переименовать"
+          onSubmit={async (name) => {
+            patchCachedEntries(qc, [await updateEntry(nameRequest.id, { name })]);
+            refreshContent();
+          }}
+          onClose={() => setNameRequest(null)}
         />
       )}
 

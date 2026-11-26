@@ -1,0 +1,728 @@
+<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>SafeBox — макет клика</title>
+<style>
+:root {
+  --bg: #09090b; --panel: #18181b; --panel2: #111113; --line: #27272a; --line2: #3f3f46;
+  --text: #f4f4f5; --dim: #a1a1aa; --dim2: #71717a; --accent: #6366f1; --accent2: #818cf8;
+  --danger: #ef4444; --ok: #10b981; --amber: #f59e0b;
+}
+* { box-sizing: border-box; scrollbar-width: thin; scrollbar-color: #3f3f46 transparent; }
+html, body { height: 100%; margin: 0; }
+body { background: var(--bg); color: var(--text); font: 14px/1.35 system-ui, 'Segoe UI', Roboto, sans-serif;
+  display: grid; grid-template-rows: auto 1fr auto; overflow: hidden; color-scheme: dark; }
+button { font: inherit; color: inherit; }
+.top { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--line); background: var(--panel2); flex-wrap: wrap; }
+.brand { font-weight: 600; letter-spacing: .2px; margin-right: 4px; }
+.brand small { color: var(--dim2); font-weight: 400; margin-left: 6px; }
+.seg { display: inline-flex; border: 1px solid var(--line2); border-radius: 8px; overflow: hidden; }
+.seg button { background: transparent; border: 0; padding: 5px 10px; cursor: pointer; color: var(--dim); }
+.seg button + button { border-left: 1px solid var(--line2); }
+.seg button.on { background: var(--accent); color: #fff; }
+.lbl { color: var(--dim2); font-size: 12px; }
+input[type=search], select { background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; color: var(--text); padding: 5px 9px; font: inherit; }
+input[type=search] { width: 220px; }
+input[type=search]:focus, select:focus { outline: 2px solid var(--accent); outline-offset: -1px; }
+.btn { background: var(--panel); border: 1px solid var(--line2); border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+.btn:hover { border-color: var(--dim2); }
+.btn.on { border-color: var(--accent); color: var(--accent2); }
+.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.danger { background: var(--danger); border-color: var(--danger); color: #fff; }
+.spacer { flex: 1; }
+.main { display: grid; grid-template-columns: 220px 1fr auto; min-height: 0; }
+.side { border-right: 1px solid var(--line); padding: 10px 6px; overflow: auto; background: var(--panel2); }
+.side .grp { color: var(--dim2); font-size: 11px; text-transform: uppercase; letter-spacing: .6px; padding: 10px 10px 4px; }
+.side .f { display: flex; justify-content: space-between; gap: 8px; padding: 6px 10px; border-radius: 7px; cursor: pointer; color: var(--dim); }
+.side .f:hover { background: #1f1f23; color: var(--text); }
+.side .f.on { background: #232347; color: #fff; }
+.side .f .n { color: var(--dim2); font-size: 12px; font-variant-numeric: tabular-nums; }
+.side .note { margin: 14px 8px 0; padding: 10px; border: 1px dashed var(--line2); border-radius: 8px; color: var(--dim2); font-size: 12px; }
+#viewport { position: relative; overflow: auto; outline: none; user-select: none; }
+#spacer { position: relative; }
+.tile { position: absolute; border: 1px solid var(--line); border-radius: 12px; background: #141417; cursor: pointer; overflow: hidden; }
+.tile:hover { border-color: #52525b; }
+.tile.sel { border-color: var(--accent); box-shadow: 0 0 0 1px var(--accent); background: #17172a; }
+.tile.foc::after { content: ''; position: absolute; inset: 3px; border: 1px dashed #a5b4fc; border-radius: 9px; pointer-events: none; }
+.th { position: absolute; left: 8px; right: 8px; top: 8px; border-radius: 8px; overflow: hidden; display: flex; align-items: center; justify-content: center; }
+.th .big { font-size: 34px; opacity: .55; }
+.th .yt { background: #dc2626; color: #fff; border-radius: 9px; padding: 3px 11px; font-size: 13px; box-shadow: 0 2px 8px #0008; }
+.th .yt.gone { background: #52525b; }
+.th .ttl { position: absolute; left: 7px; right: 7px; bottom: 6px; font-size: 11px; color: #fff; text-shadow: 0 1px 3px #000; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.th .play { width: 34px; height: 34px; border-radius: 50%; background: #0009; display: flex; align-items: center; justify-content: center; font-size: 13px; }
+.th .dur { position: absolute; right: 5px; bottom: 5px; background: #000b; color: #fff; font-size: 11px; padding: 1px 5px; border-radius: 4px; }
+.th .paper { position: absolute; inset: 0; background: #f4f1e8; color: #3f3f46; padding: 8px 9px; font-size: 10.5px; line-height: 1.45; text-align: left; overflow: hidden; }
+.th .paper b { display: block; font-size: 11.5px; color: #18181b; margin-bottom: 3px; }
+.th .ext { font-weight: 700; font-size: 18px; letter-spacing: 1px; color: #e4e4e7; border: 2px solid #52525b; border-radius: 6px; padding: 6px 10px; }
+.tile .cb { position: absolute; left: 13px; top: 13px; width: 20px; height: 20px; border-radius: 5px; border: 1px solid #a1a1aa; background: #09090bcc; color: transparent; font-size: 12px; line-height: 18px; text-align: center; padding: 0; opacity: 0; cursor: pointer; z-index: 2; }
+.tile:hover .cb, .tile.sel .cb, body.anysel .tile .cb { opacity: 1; }
+.tile.sel .cb { background: var(--accent); border-color: var(--accent); color: #fff; }
+.tile .kind { position: absolute; right: 13px; top: 13px; background: #000a; border-radius: 5px; padding: 1px 5px; font-size: 11px; z-index: 2; }
+.tile .nm { position: absolute; left: 10px; right: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 13px; color: #e4e4e7; }
+.tile .cap { position: absolute; left: 10px; right: 10px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-size: 11.5px; color: var(--dim2); }
+.tile .tagx { color: var(--amber); }
+.row { position: absolute; left: 0; right: 0; height: 34px; display: grid; grid-template-columns: 34px minmax(0,1fr) 90px 90px 100px 170px; align-items: center; gap: 10px; padding: 0 12px; border-bottom: 1px solid #18181b; cursor: pointer; font-size: 13px; }
+.row:hover { background: #141417; }
+.row.sel { background: #1e1e3a; }
+.row.foc { box-shadow: inset 0 0 0 1px #a5b4fc; }
+.row .mini { width: 26px; height: 20px; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-size: 11px; overflow: hidden; }
+.row .c { color: var(--dim); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.row .nm2 { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.lhead { position: sticky; top: 0; z-index: 3; height: 30px; display: grid; grid-template-columns: 34px minmax(0,1fr) 90px 90px 100px 170px; gap: 10px; padding: 0 12px; align-items: center; background: var(--panel2); border-bottom: 1px solid var(--line); color: var(--dim2); font-size: 12px; }
+.lhead span { cursor: pointer; }
+.lhead span:hover { color: var(--text); }
+#marquee { position: absolute; border: 1px solid var(--accent2); background: #6366f126; pointer-events: none; display: none; z-index: 5; }
+.empty { position: absolute; inset: 0; display: flex; align-items: center; justify-content: center; color: var(--dim2); }
+.props { width: 300px; border-left: 1px solid var(--line); background: var(--panel2); padding: 14px; overflow: auto; display: none; }
+.props.open { display: block; }
+.props h3 { margin: 0 0 10px; font-size: 14px; }
+.props .pv { aspect-ratio: 4/3; border-radius: 10px; overflow: hidden; position: relative; margin-bottom: 12px; display: flex; align-items: center; justify-content: center; }
+.props dl { display: grid; grid-template-columns: 92px 1fr; gap: 6px 10px; margin: 0; font-size: 13px; }
+.props dt { color: var(--dim2); }
+.props dd { margin: 0; overflow-wrap: anywhere; }
+.chip { display: inline-block; border: 1px solid var(--line2); background: #27272a; border-radius: 999px; padding: 0 8px; font-size: 11.5px; margin: 0 4px 4px 0; }
+.chip.warn { border-color: #92400e; background: #451a03; color: #fcd34d; }
+.status { display: flex; gap: 16px; align-items: center; padding: 5px 12px; border-top: 1px solid var(--line); background: var(--panel2); color: var(--dim2); font-size: 12px; font-variant-numeric: tabular-nums; flex-wrap: wrap; }
+.status b { color: var(--dim); font-weight: 500; }
+.status .keys { margin-left: auto; color: var(--dim); }
+kbd { background: #27272a; border: 1px solid #3f3f46; border-bottom-width: 2px; border-radius: 4px; padding: 0 4px; font: 11px ui-monospace, Consolas, monospace; color: #e4e4e7; }
+.toast { position: fixed; left: 50%; bottom: 44px; transform: translateX(-50%); background: #27272a; border: 1px solid #3f3f46; border-radius: 10px; padding: 9px 12px 9px 14px; display: none; align-items: center; gap: 14px; box-shadow: 0 8px 30px #000a; z-index: 60; }
+.toast.show { display: flex; }
+.toast button { background: transparent; border: 0; color: var(--accent2); cursor: pointer; font-weight: 600; }
+.menu { position: fixed; background: #1c1c1f; border: 1px solid #3f3f46; border-radius: 9px; padding: 4px; min-width: 210px; box-shadow: 0 10px 30px #000b; z-index: 70; display: none; }
+.menu div { padding: 6px 10px; border-radius: 6px; cursor: pointer; display: flex; justify-content: space-between; gap: 20px; }
+.menu div:hover { background: #2a2a40; }
+.menu div span { color: var(--dim2); font-size: 12px; }
+.menu hr { border: 0; border-top: 1px solid #3f3f46; margin: 4px 2px; }
+.viewer { position: fixed; inset: 0; background: #000e; z-index: 50; display: none; grid-template-rows: auto 1fr auto; }
+.viewer.open { display: grid; }
+.vtop { display: flex; align-items: center; gap: 10px; padding: 10px 14px; color: var(--dim); }
+.vtop .cnt { font-variant-numeric: tabular-nums; }
+.vtop .vbtn { background: #27272a; border: 1px solid #3f3f46; border-radius: 8px; padding: 5px 10px; cursor: pointer; color: #e4e4e7; }
+.vtop .vbtn:hover { border-color: #71717a; }
+.vtop .vbtn.del:hover { border-color: var(--danger); color: #fca5a5; }
+.vstage { position: relative; display: flex; align-items: center; justify-content: center; min-height: 0; padding: 0 70px; }
+.vnav { position: absolute; top: 50%; transform: translateY(-50%); width: 46px; height: 70px; border-radius: 10px; background: #18181bcc; border: 1px solid #3f3f46; cursor: pointer; font-size: 22px; color: #e4e4e7; }
+.vnav.l { left: 12px; } .vnav.r { right: 12px; }
+.vimg { position: relative; border-radius: 8px; max-width: 100%; max-height: 100%; display: flex; align-items: center; justify-content: center; overflow: hidden; }
+.vbar { padding: 10px 16px 14px; color: var(--dim); display: flex; gap: 18px; align-items: baseline; flex-wrap: wrap; }
+.vbar .vn { color: #fff; font-size: 15px; }
+.fakeplayer { position: absolute; left: 0; right: 0; bottom: 0; padding: 10px 12px; background: linear-gradient(transparent, #000c); display: flex; gap: 10px; align-items: center; color: #fff; font-size: 12px; }
+.fakeplayer .bar { flex: 1; height: 4px; background: #ffffff40; border-radius: 2px; overflow: hidden; }
+.fakeplayer .bar i { display: block; height: 100%; width: 0; background: var(--accent2); }
+.ytbox { background: #000; border-radius: 10px; overflow: hidden; display: flex; align-items: center; justify-content: center; position: relative; }
+.ytbox iframe { border: 0; width: 100%; height: 100%; }
+.ytmsg { position: absolute; inset: 0; display: flex; flex-direction: column; gap: 12px; align-items: center; justify-content: center; text-align: center; padding: 24px; background: #000a; }
+.ytmsg p { margin: 0; max-width: 420px; color: #e4e4e7; }
+.notebig { background: #f4f1e8; color: #27272a; border-radius: 10px; padding: 26px 30px; width: min(680px, 90vw); max-height: 100%; overflow: auto; font-size: 15px; line-height: 1.6; }
+.notebig h2 { margin: 0 0 10px; font-size: 20px; }
+.notebig label { display: block; }
+.modal { position: fixed; inset: 0; background: #000a; display: none; align-items: center; justify-content: center; z-index: 80; }
+.modal.open { display: flex; }
+.modal .box { background: #18181b; border: 1px solid #3f3f46; border-radius: 12px; padding: 18px 20px; width: min(420px, 92vw); }
+.modal .box p { color: var(--dim); }
+.modal .acts { display: flex; justify-content: flex-end; gap: 8px; margin-top: 14px; }
+.help { position: fixed; right: 14px; bottom: 40px; width: 330px; background: #18181bf2; border: 1px solid #3f3f46; border-radius: 12px; padding: 12px 14px; z-index: 40; font-size: 12.5px; color: var(--dim); box-shadow: 0 10px 30px #000a; }
+.help h4 { margin: 0 0 6px; color: #fff; font-size: 13px; display: flex; justify-content: space-between; }
+.help h4 button { background: none; border: 0; color: var(--dim2); cursor: pointer; }
+.help ul { margin: 0; padding-left: 16px; }
+.help li { margin: 3px 0; }
+.help .tip { margin-top: 8px; color: var(--dim2); }
+</style>
+</head>
+<body>
+<div class="top">
+  <span class="brand">SafeBox <small>макет · данные выдуманы</small></span>
+  <span class="lbl">Клик по плитке:</span>
+  <div class="seg" id="modelSeg">
+    <button data-m="A" title="Как сейчас по ТЗ (UF-3/UF-4)">открывает (сейчас)</button>
+    <button data-m="B" title="Как проводник: клик выделяет, двойной/Enter открывает, пробел — просмотр">выделяет (предлагаю)</button>
+  </div>
+  <span class="spacer"></span>
+  <input type="search" id="search" placeholder="Поиск в папке (Ctrl+F)">
+  <select id="sort" title="Сортировка">
+    <option value="date">Новые сверху</option>
+    <option value="date-asc">Старые сверху</option>
+    <option value="name">По имени</option>
+    <option value="size">Самые большие</option>
+    <option value="kind">По типу</option>
+  </select>
+  <div class="seg" id="viewSeg">
+    <button data-v="grid" title="Плитки">▦</button>
+    <button data-v="list" title="Список">☰</button>
+  </div>
+  <input type="range" id="size" min="110" max="300" value="170" title="Размер плиток">
+  <button class="btn" id="propsBtn" title="Свойства (Alt+Enter)">ⓘ Свойства</button>
+  <button class="btn" id="restoreBtn" style="display:none">↩ Восстановить</button>
+  <button class="btn" id="helpBtn" title="Что попробовать">?</button>
+</div>
+
+<div class="main">
+  <nav class="side" id="side"></nav>
+  <div id="viewport" tabindex="0">
+    <div id="lhead" class="lhead" style="display:none">
+      <span></span><span data-s="name">Имя</span><span data-s="kind">Тип</span><span data-s="size">Размер</span><span data-s="date">Дата</span><span>Источник</span>
+    </div>
+    <div id="spacer"><div id="layer"></div><div id="marquee"></div></div>
+    <div class="empty" id="empty" style="display:none">Пусто</div>
+  </div>
+  <aside class="props" id="props"></aside>
+</div>
+
+<div class="status" id="status"></div>
+
+<div class="viewer" id="viewer">
+  <div class="vtop">
+    <span class="cnt" id="vcnt"></span>
+    <span class="spacer"></span>
+    <button class="vbtn" id="vinfo" title="Свойства (I)">ⓘ</button>
+    <button class="vbtn del" id="vdel" title="В корзину и к следующему (Delete)">🗑 В корзину</button>
+    <button class="vbtn" id="vclose" title="Закрыть (Esc)">✕</button>
+  </div>
+  <div class="vstage" id="vstage">
+    <button class="vnav l" id="vprev" title="Назад (←)">‹</button>
+    <div id="vbody" style="display:flex;align-items:center;justify-content:center;width:100%;height:100%"></div>
+    <button class="vnav r" id="vnext" title="Дальше (→)">›</button>
+  </div>
+  <div class="vbar" id="vbar"></div>
+</div>
+
+<div class="menu" id="menu"></div>
+<div class="toast" id="toast"><span id="toastText"></span><button id="toastUndo">Отменить <kbd>Ctrl+Z</kbd></button></div>
+<div class="modal" id="modal"><div class="box"><h3 id="mTitle" style="margin:0"></h3><p id="mText"></p>
+  <div class="acts"><button class="btn" id="mNo">Отмена</button><button class="btn danger" id="mYes">Стереть</button></div></div></div>
+<div class="help" id="help"></div>
+
+<script>
+'use strict';
+// ---------- данные: выдуманные, детерминированные ----------
+const DEMO_YT = 'jNQXAC9IVRw'; // одно публичное видео для всех ссылок макета
+function rng(seed) { return () => { seed |= 0; seed = seed + 0x6D2B79F5 | 0; let t = Math.imul(seed ^ seed >>> 15, 1 | seed); t = t + Math.imul(t ^ t >>> 7, 61 | t) ^ t; return ((t ^ t >>> 14) >>> 0) / 4294967296; }; }
+const W1 = ['Кот', 'Пёс', 'Когда', 'Тот самый', 'Мой код', 'Понедельник', 'Дедлайн', 'Тимлид', 'Бабушка', 'Енот', 'Кофе', 'Продакшн', 'Пятница', 'Студент', 'Котик', 'Сосед'];
+const W2 = ['увидел', 'пытается', 'делает вид, что', 'внезапно', 'опять', 'наконец', 'не понял, что', 'объясняет, как', 'смотрит, как', 'узнал, что'];
+const W3 = ['работает', 'падает в проде', 'всё понял', 'спит', 'деплоит', 'ест пиццу', 'читает логи', 'играет на гитаре', 'чинит баг', 'идёт в отпуск', 'танцует', 'ничего не трогал'];
+const YT1 = ['Как собрать', 'Обзор', 'Почему', 'Лучший', 'История', 'Разбор', 'Гайд:', '10 фактов про', 'Я попробовал', 'Что будет, если'];
+const YT2 = ['ПК за 50 тысяч', 'старый ноутбук', 'японский нож', 'C++ за час', 'горный поход', 'кофемашину', 'SQLite', 'дом из бруса', 'синтезатор', 'велосипед', 'Rust', 'бабушкин рецепт борща'];
+const CHATS = ['Мемы', 'Избранное', 'Работа', 'Игры', 'Семья'];
+const NOTE = ['Список покупок', 'Идеи на выходные', 'Пароль от вайфая — спросить', 'Что посмотреть', 'Рецепт сырников', 'Подарки на ДР', 'Чек-лист перед поездкой'];
+
+const FOLDERS = [
+  { id: 'memes', name: 'Мемы', count: 48000, mix: [['photo', .58], ['video', .3], ['link', .09], ['note', .03]], src: 'telegram', chat: 'Мемы' },
+  { grp: 'Telegram' },
+  { id: 'tg-fav', name: 'Избранное', count: 2400, mix: [['photo', .35], ['video', .15], ['link', .2], ['note', .25], ['file', .05]], src: 'telegram', chat: 'Избранное' },
+  { id: 'tg-work', name: 'Чат «Работа»', count: 900, mix: [['photo', .3], ['video', .05], ['link', .25], ['note', .25], ['file', .15]], src: 'telegram', chat: 'Работа' },
+  { grp: 'YouTube' },
+  { id: 'yt-later', name: 'Смотреть позже', count: 3200, mix: [['link', 1]], src: 'youtube', chat: 'Смотреть позже' },
+  { id: 'yt-shorts', name: 'Шортсы', count: 5200, mix: [['link', 1]], src: 'youtube', chat: 'Шортсы', short: true },
+  { id: 'yt-music', name: 'Музыка', count: 1100, mix: [['link', 1]], src: 'youtube', chat: 'Музыка' },
+  { grp: 'Discord' },
+  { id: 'dc', name: 'Сервер «Игры»', count: 120, mix: [['photo', .4], ['link', .3], ['note', .3]], src: 'discord', chat: 'Игры' },
+  { grp: '' },
+  { id: 'trash', name: '🗑 Корзина', trash: true },
+];
+let nextId = 1;
+const store = {}; // folderId -> массив записей (порядок генерации = дата по убыванию)
+function gen(f) {
+  const r = rng(f.id.split('').reduce((a, c) => a * 31 + c.charCodeAt(0), 7));
+  const out = new Array(f.count);
+  let t = Date.UTC(2026, 10, 20);
+  for (let i = 0; i < f.count; i++) {
+    t -= Math.floor(r() * 4 * 3600e3);
+    let x = r(), kind = 'photo';
+    for (const [k, p] of f.mix) { if (x < p) { kind = k; break; } x -= p; }
+    const pick = (a) => a[Math.floor(r() * a.length)];
+    const it = { id: nextId++, kind, date: t, hue: Math.floor(r() * 360), hue2: Math.floor(r() * 360), folder: f.id, tags: [], src: f.src, chat: f.chat };
+    if (kind === 'photo') {
+      const d = new Date(t); const p = (n) => String(n).padStart(2, '0');
+      it.name = r() < .6 ? `photo_${d.getUTCFullYear()}-${p(d.getUTCMonth() + 1)}-${p(d.getUTCDate())}_${p(d.getUTCHours())}-${p(d.getUTCMinutes())}-${p(d.getUTCSeconds())}.jpg` : `${pick(W1)} ${pick(W2)} ${pick(W3)}.${r() < .2 ? 'png' : r() < .1 ? 'gif' : 'jpg'}`;
+      it.size = Math.floor(40e3 + r() * 900e3); it.w = r() < .5 ? 1280 : 960; it.h = r() < .5 ? 960 : 1280;
+    } else if (kind === 'video') {
+      it.name = r() < .5 ? `video_${it.id}.mp4` : `${pick(W1)} ${pick(W2)} ${pick(W3)}.mp4`;
+      it.dur = Math.floor(3e3 + r() * (r() < .9 ? 60e3 : 900e3)); it.size = Math.floor(it.dur * (60 + r() * 140)); it.w = r() < .5 ? 720 : 1280; it.h = it.w === 720 ? 1280 : 720;
+    } else if (kind === 'link') {
+      const yt = f.src === 'youtube' || r() < .7;
+      if (yt) {
+        it.yt = true; it.short = !!f.short || (f.src !== 'youtube' && r() < .5);
+        it.name = `${pick(YT1)} ${pick(YT2)}`; it.domain = 'youtube.com';
+        it.url = it.short ? `https://youtube.com/shorts/${DEMO_YT}` : `https://www.youtube.com/watch?v=${DEMO_YT}`;
+        const s = r();
+        it.state = s < .09 ? 'gone' : s < .12 ? 'noembed' : 'ok';
+        if (it.state === 'gone') it.tags.push('YouTube/Недоступно');
+        if (it.state === 'noembed') it.tags.push('YouTube/Без встраивания');
+        it.desc = r() < .65 ? 'Описание автора: ' + pick(W1).toLowerCase() + ' ' + pick(W3) + '.' : '';
+        it.dur = it.short ? Math.floor(8e3 + r() * 50e3) : Math.floor(60e3 + r() * 1800e3);
+      } else {
+        it.domain = pick(['habr.com', 'github.com', 't.me', 'wikipedia.org', 'reddit.com']);
+        it.name = `${pick(YT1)} ${pick(YT2)}`; it.url = `https://${it.domain}/…`;
+      }
+      it.size = 0;
+    } else if (kind === 'note') {
+      it.name = `${pick(NOTE)}.md`; it.size = Math.floor(200 + r() * 4e3);
+      it.text = ['Купить молоко', 'Позвонить маме', 'Забрать посылку', 'Сделать бэкап сейфа', 'Посмотреть шортсы'].slice(0, 2 + Math.floor(r() * 3));
+    } else {
+      const ext = pick(['zip', 'pdf', 'rar', 'pptx', 'flac']);
+      it.name = `${pick(YT2)}.${ext}`; it.ext = ext; it.size = Math.floor(1e5 + r() * (ext === 'rar' ? 4e8 : 3e7));
+    }
+    if (f.src !== 'youtube' && r() < .3) it.tags.push(pick(['Юмор/Котики', 'Юмор/Работа', 'Важное', 'Посмотреть потом']));
+    out[i] = it;
+  }
+  return out;
+}
+const trash = []; // {item, folder, pos}
+function items(fid) { if (fid === 'trash') return trash.map((t) => t.item); if (!store[fid]) store[fid] = gen(FOLDERS.find((f) => f.id === fid)); return store[fid]; }
+
+// ---------- состояние ----------
+const S = { model: 'B', folder: 'memes', view: 'grid', sort: 'date', q: '', tile: 170, props: false,
+  list: [], index: new Map(), sel: new Set(), anchor: null, focus: null, undo: [], viewerAt: -1, quick: false };
+try { const m = localStorage.getItem('sb-mock-model'); if (m === 'A' || m === 'B') S.model = m; } catch (e) {}
+
+const $ = (id) => document.getElementById(id);
+const vp = $('viewport'), spacer = $('spacer'), layer = $('layer');
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+const fmtBytes = (b) => b === 0 ? '—' : b < 1e6 ? (b / 1e3).toFixed(0) + ' КБ' : b < 1e9 ? (b / 1e6).toFixed(1).replace('.', ',') + ' МБ' : (b / 1e9).toFixed(2).replace('.', ',') + ' ГБ';
+const fmtDur = (ms) => { const s = Math.round(ms / 1000), h = Math.floor(s / 3600), m = Math.floor(s / 60) % 60, ss = String(s % 60).padStart(2, '0'); return h ? `${h}:${String(m).padStart(2, '0')}:${ss}` : `${m}:${ss}`; };
+const fmtDate = (t) => new Date(t).toLocaleDateString('ru-RU');
+const GLYPH = { photo: '🖼️', video: '🎬', link: '🔗', note: '📝', file: '📦' };
+const KIND = { photo: 'Фото', video: 'Видео', link: 'Ссылка', note: 'Заметка', file: 'Файл' };
+
+// ---------- список текущей папки ----------
+function rebuild(keepScroll) {
+  let arr = items(S.folder);
+  if (S.q) { const q = S.q.toLowerCase(); arr = arr.filter((it) => it.name.toLowerCase().includes(q) || (it.desc || '').toLowerCase().includes(q)); }
+  else arr = arr.slice();
+  const by = { date: (a, b) => b.date - a.date, 'date-asc': (a, b) => a.date - b.date, name: (a, b) => a.name.localeCompare(b.name, 'ru'), size: (a, b) => b.size - a.size, kind: (a, b) => a.kind.localeCompare(b.kind) || b.date - a.date };
+  arr.sort(by[S.sort]);
+  S.list = arr; S.index = new Map(arr.map((it, i) => [it.id, i]));
+  for (const id of [...S.sel]) if (!S.index.has(id)) S.sel.delete(id);
+  if (S.focus !== null && !S.index.has(S.focus)) S.focus = null;
+  if (!keepScroll) vp.scrollTop = 0;
+  layout(); render(); renderSide(); renderProps(); renderStatus();
+}
+
+// ---------- раскладка и виртуализация ----------
+const L = {};
+function layout() {
+  const w = vp.clientWidth;
+  if (S.view === 'grid') {
+    L.pad = 14; L.gap = 10; L.tw = S.tile; L.cols = Math.max(1, Math.floor((w - 2 * L.pad + L.gap) / (L.tw + L.gap)));
+    L.tw = Math.floor((w - 2 * L.pad - (L.cols - 1) * L.gap) / L.cols);
+    L.thH = Math.round((L.tw - 16) * 0.75); L.th = L.thH + 8 + 46; L.rowH = L.th + L.gap; L.top = L.pad;
+  } else { L.cols = 1; L.rowH = 34; L.top = 0; L.pad = 0; L.gap = 0; }
+  L.rows = Math.ceil(S.list.length / L.cols);
+  spacer.style.height = (L.top + L.rows * L.rowH + 20) + 'px';
+  $('lhead').style.display = S.view === 'list' ? 'grid' : 'none';
+  $('empty').style.display = S.list.length ? 'none' : 'flex';
+  $('empty').textContent = S.folder === 'trash' ? 'Корзина пуста' : S.q ? 'Ничего не найдено' : 'Пусто';
+}
+function thumbStyle(it) {
+  if (it.kind === 'note') return 'background:#f4f1e8';
+  if (it.kind === 'file') return 'background:#1f1f23';
+  if (it.kind === 'link' && it.yt) return it.state === 'gone' ? 'background:linear-gradient(135deg,#3f3f46,#18181b)' : `background:linear-gradient(135deg,hsl(${it.hue} 45% 32%),hsl(${it.hue2} 50% 14%))`;
+  if (it.kind === 'link') return 'background:linear-gradient(135deg,#1e293b,#0f172a)';
+  return `background:radial-gradient(circle at ${30 + it.hue % 40}% ${30 + it.hue2 % 40}%,hsl(${it.hue2} 70% 62%) 0 18%,transparent 19%),linear-gradient(135deg,hsl(${it.hue} 55% 46%),hsl(${(it.hue + 50) % 360} 60% 24%))`;
+}
+function thumbInner(it, big) {
+  if (it.kind === 'video') return `<div class="play">▶</div><span class="dur">${fmtDur(it.dur)}</span>`;
+  if (it.kind === 'link' && it.yt) return `<span class="yt ${it.state === 'gone' ? 'gone' : ''}">${it.state === 'gone' ? '⊘' : '▶'}${it.short ? ' Shorts' : ''}</span>${big ? '' : `<span class="ttl">${esc(it.name)}</span>`}<span class="dur" style="bottom:auto;top:5px;left:5px;right:auto">${it.state === 'gone' ? 'недоступно' : fmtDur(it.dur)}</span>`;
+  if (it.kind === 'link') return `<span class="big">🔗</span><span class="ttl">${esc(it.domain)}</span>`;
+  if (it.kind === 'note') return `<div class="paper"><b>${esc(it.name.replace(/\.md$/, ''))}</b>${it.text.map((t) => '☐ ' + esc(t)).join('<br>')}</div>`;
+  if (it.kind === 'file') return `<span class="ext">${esc(it.ext.toUpperCase())}</span>`;
+  return '';
+}
+function caption(it) {
+  if (it.kind === 'link') return it.tags.length ? `<span class="tagx">${esc(it.tags[0])}</span>` : esc(it.domain);
+  if (it.kind === 'video') return `${fmtBytes(it.size)} · ${fmtDur(it.dur)}`;
+  return `${fmtBytes(it.size)} · ${fmtDate(it.date)}`;
+}
+let rendered = 0;
+function render() {
+  const n = S.list.length;
+  if (!n) { layer.innerHTML = ''; rendered = 0; return; }
+  const top = vp.scrollTop - L.top, h = vp.clientHeight;
+  const r0 = Math.max(0, Math.floor(top / L.rowH) - 2), r1 = Math.min(L.rows - 1, Math.ceil((top + h) / L.rowH) + 2);
+  const parts = [];
+  for (let r = r0; r <= r1; r++) {
+    for (let c = 0; c < L.cols; c++) {
+      const i = r * L.cols + c; if (i >= n) break;
+      const it = S.list[i], cls = (S.sel.has(it.id) ? ' sel' : '') + (S.focus === it.id ? ' foc' : '');
+      if (S.view === 'grid') {
+        const x = L.pad + c * (L.tw + L.gap), y = L.top + r * L.rowH;
+        parts.push(`<div class="tile${cls}" data-i="${i}" style="left:${x}px;top:${y}px;width:${L.tw}px;height:${L.th}px">
+          <div class="th" style="height:${L.thH}px;${thumbStyle(it)}">${thumbInner(it)}</div>
+          <button class="cb" data-cb="1" tabindex="-1">✓</button><span class="kind">${GLYPH[it.kind]}</span>
+          <div class="nm" style="top:${L.thH + 14}px">${esc(it.name)}</div><div class="cap" style="top:${L.thH + 32}px">${caption(it)}</div></div>`);
+      } else {
+        parts.push(`<div class="row${cls}" data-i="${i}" style="top:${30 + r * L.rowH}px"><span class="mini" style="${thumbStyle(it)}">${it.kind === 'photo' ? '' : GLYPH[it.kind]}</span>
+          <span class="nm2">${esc(it.name)}</span><span class="c">${KIND[it.kind]}</span><span class="c">${it.kind === 'video' ? fmtDur(it.dur) : fmtBytes(it.size)}</span>
+          <span class="c">${fmtDate(it.date)}</span><span class="c">${esc(it.src)} · ${esc(it.chat)}</span></div>`);
+      }
+    }
+  }
+  layer.innerHTML = parts.join('');
+  rendered = parts.length;
+  document.body.classList.toggle('anysel', S.sel.size > 0);
+  renderStatus();
+}
+let raf = 0;
+vp.addEventListener('scroll', () => { if (!raf) raf = requestAnimationFrame(() => { raf = 0; render(); }); });
+new ResizeObserver(() => { layout(); render(); }).observe(vp);
+
+// ---------- панели ----------
+function renderSide() {
+  $('side').innerHTML = FOLDERS.map((f) => {
+    if ('grp' in f) return `<div class="grp">${esc(f.grp)}</div>`;
+    const n = f.trash ? trash.length : store[f.id] ? store[f.id].length : f.count;
+    return `<div class="f ${S.folder === f.id ? 'on' : ''}" data-f="${f.id}"><span>${esc(f.name)}</span><span class="n">${n.toLocaleString('ru-RU')}</span></div>`;
+  }).join('') + `<div class="note">Макет: данные выдуманы, сервер не нужен. Ссылки YouTube в просмотре ведут на одно публичное видео; плеер грузится из интернета.</div>`;
+  $('restoreBtn').style.display = S.folder === 'trash' ? '' : 'none';
+}
+$('side').addEventListener('click', (e) => {
+  const f = e.target.closest('[data-f]'); if (!f) return;
+  S.folder = f.dataset.f; S.sel.clear(); S.focus = null; S.anchor = null; S.q = ''; $('search').value = '';
+  rebuild(false); vp.focus();
+});
+function renderProps() {
+  const p = $('props'); p.classList.toggle('open', S.props); $('propsBtn').classList.toggle('on', S.props);
+  if (!S.props) return;
+  const ids = S.sel.size ? [...S.sel] : S.focus !== null ? [S.focus] : [];
+  if (!ids.length) { p.innerHTML = '<h3>Свойства</h3><p style="color:var(--dim2)">Ничего не выбрано.</p>'; return; }
+  if (ids.length > 1) {
+    const its = ids.map((id) => S.list[S.index.get(id)]).filter(Boolean);
+    p.innerHTML = `<h3>Выбрано: ${its.length.toLocaleString('ru-RU')}</h3><dl><dt>Размер</dt><dd>${fmtBytes(its.reduce((a, b) => a + b.size, 0))}</dd>
+      <dt>Фото</dt><dd>${its.filter((x) => x.kind === 'photo').length}</dd><dt>Видео</dt><dd>${its.filter((x) => x.kind === 'video').length}</dd><dt>Ссылки</dt><dd>${its.filter((x) => x.kind === 'link').length}</dd></dl>`;
+    return;
+  }
+  const it = S.list[S.index.get(ids[0])]; if (!it) return;
+  p.innerHTML = `<div class="pv" style="${thumbStyle(it)}">${thumbInner(it)}</div><h3 style="overflow-wrap:anywhere">${esc(it.name)}</h3><dl>
+    <dt>Тип</dt><dd>${KIND[it.kind]}${it.short ? ' · Shorts' : ''}</dd>
+    ${it.size ? `<dt>Размер</dt><dd>${fmtBytes(it.size)}</dd>` : ''}
+    ${it.w ? `<dt>Кадр</dt><dd>${it.w}×${it.h}</dd>` : ''}${it.dur ? `<dt>Длительность</dt><dd>${fmtDur(it.dur)}</dd>` : ''}
+    <dt>Дата</dt><dd>${new Date(it.date).toLocaleString('ru-RU')}</dd>
+    <dt>Источник</dt><dd>${esc(it.src)} · ${esc(it.chat)}</dd>
+    ${it.url ? `<dt>Адрес</dt><dd><a href="${esc(it.url)}" target="_blank" rel="noopener" style="color:var(--accent2)">${esc(it.url)}</a></dd>` : ''}
+    ${it.desc ? `<dt>Описание</dt><dd>${esc(it.desc)}</dd>` : ''}
+    <dt>Теги</dt><dd>${it.tags.length ? it.tags.map((t) => `<span class="chip ${t.startsWith('YouTube/') ? 'warn' : ''}">${esc(t)}</span>`).join('') : '<span style="color:var(--dim2)">нет</span>'}</dd></dl>`;
+}
+function renderStatus() {
+  const selSize = [...S.sel].reduce((a, id) => a + (S.list[S.index.get(id)]?.size || 0), 0);
+  const keys = S.model === 'A'
+    ? '<kbd>клик</kbd> открыть · <kbd>Ctrl</kbd>/<kbd>Shift</kbd>+клик выделить · <kbd>Del</kbd> в корзину'
+    : '<kbd>клик</kbd> выделить · <kbd>2×клик</kbd>/<kbd>Enter</kbd> открыть · <kbd>Пробел</kbd> просмотр · <kbd>←↑→↓</kbd> · <kbd>Del</kbd> в корзину';
+  $('status').innerHTML = `<span>Объектов: <b>${S.list.length.toLocaleString('ru-RU')}</b></span><span>Выбрано: <b>${S.sel.size.toLocaleString('ru-RU')}</b>${S.sel.size ? ' (' + fmtBytes(selSize) + ')' : ''}</span>
+    <span title="Сколько плиток сейчас в DOM: рисуются только видимые">В DOM: <b>${rendered}</b></span><span class="keys">${keys} · <kbd>Ctrl+Z</kbd> отменить</span>`;
+}
+
+// ---------- выделение ----------
+function setFocus(id, scroll) { S.focus = id; if (scroll) scrollToIndex(S.index.get(id)); }
+function scrollToIndex(i) {
+  if (i === undefined) return;
+  const r = Math.floor(i / L.cols), y = L.top + r * L.rowH + (S.view === 'list' ? 30 : 0), h = vp.clientHeight;
+  if (y < vp.scrollTop + (S.view === 'list' ? 30 : 0)) vp.scrollTop = y - (S.view === 'list' ? 30 : 8);
+  else if (y + L.rowH > vp.scrollTop + h) vp.scrollTop = y + L.rowH - h + 8;
+}
+function selectRange(a, b, add) {
+  if (!add) S.sel.clear();
+  const [x, y] = a < b ? [a, b] : [b, a];
+  for (let i = x; i <= y; i++) S.sel.add(S.list[i].id);
+}
+function only(id) { S.sel.clear(); S.sel.add(id); S.anchor = id; setFocus(id); }
+function toggle(id) { S.sel.has(id) ? S.sel.delete(id) : S.sel.add(id); S.anchor = id; setFocus(id); }
+function changed() { render(); renderProps(); renderStatus(); }
+
+// ---------- мышь ----------
+let suppressClick = false;
+layer.addEventListener('click', (e) => {
+  if (suppressClick) { suppressClick = false; return; }
+  const t = e.target.closest('[data-i]'); if (!t) return;
+  e.stopPropagation(); hideMenu();
+  const i = +t.dataset.i, it = S.list[i];
+  if (e.target.closest('[data-cb]')) { toggle(it.id); changed(); return; }
+  if (e.ctrlKey || e.metaKey) toggle(it.id);
+  else if (e.shiftKey && S.anchor !== null && S.index.has(S.anchor)) { selectRange(S.index.get(S.anchor), i, false); setFocus(it.id); }
+  else if (S.model === 'A') { setFocus(it.id); changed(); openViewer(i, false); return; }
+  else only(it.id);
+  changed();
+});
+layer.addEventListener('dblclick', (e) => {
+  const t = e.target.closest('[data-i]'); if (!t || e.target.closest('[data-cb]') || S.model === 'A') return;
+  openViewer(+t.dataset.i, false);
+});
+vp.addEventListener('click', (e) => {
+  if (suppressClick) { suppressClick = false; return; }
+  if (!e.target.closest('[data-i]') && !e.target.closest('.lhead')) { S.sel.clear(); changed(); }
+});
+$('lhead').addEventListener('click', (e) => { const s = e.target.dataset.s; if (s) { S.sort = s === 'date' && S.sort === 'date' ? 'date-asc' : s; $('sort').value = S.sort; rebuild(true); } });
+
+// рамка выделения поверх виртуального списка: попадание считается по геометрии, не по DOM
+const mq = $('marquee'); let drag = null;
+vp.addEventListener('mousedown', (e) => {
+  if (e.button !== 0 || e.target.closest('[data-i]') || e.target.closest('.lhead') || e.offsetX > vp.clientWidth) return;
+  const r = vp.getBoundingClientRect();
+  drag = { x0: e.clientX - r.left + vp.scrollLeft, y0: e.clientY - r.top + vp.scrollTop, base: e.ctrlKey ? new Set(S.sel) : new Set(), moved: false, cy: e.clientY, cx: e.clientX };
+  vp.focus(); e.preventDefault();
+});
+function marqueeUpdate() {
+  if (!drag) return;
+  const r = vp.getBoundingClientRect();
+  const x1 = drag.cx - r.left + vp.scrollLeft, y1 = drag.cy - r.top + vp.scrollTop;
+  const xa = Math.min(drag.x0, x1), xb = Math.max(drag.x0, x1), ya = Math.min(drag.y0, y1), yb = Math.max(drag.y0, y1);
+  if (!drag.moved && xb - xa < 4 && yb - ya < 4) return;
+  drag.moved = true;
+  Object.assign(mq.style, { display: 'block', left: xa + 'px', top: ya + 'px', width: xb - xa + 'px', height: yb - ya + 'px' });
+  S.sel = new Set(drag.base);
+  const off = S.view === 'list' ? 30 : L.top;
+  const r0 = Math.max(0, Math.floor((ya - off) / L.rowH)), r1 = Math.min(L.rows - 1, Math.floor((yb - off) / L.rowH));
+  for (let row = r0; row <= r1; row++) {
+    const yTop = off + row * L.rowH; if (yTop > yb || yTop + (S.view === 'list' ? L.rowH : L.th) < ya) continue;
+    for (let c = 0; c < L.cols; c++) {
+      const i = row * L.cols + c; if (i >= S.list.length) break;
+      if (S.view === 'grid') { const x = L.pad + c * (L.tw + L.gap); if (x > xb || x + L.tw < xa) continue; }
+      S.sel.add(S.list[i].id);
+    }
+  }
+  render(); renderProps();
+}
+window.addEventListener('mousemove', (e) => { if (!drag) return; drag.cx = e.clientX; drag.cy = e.clientY; marqueeUpdate(); });
+window.addEventListener('mouseup', () => { if (!drag) return; if (drag.moved) suppressClick = true; drag = null; mq.style.display = 'none'; });
+setInterval(() => { // автопрокрутка у краёв во время рамки
+  if (!drag || !drag.moved) return;
+  const r = vp.getBoundingClientRect();
+  if (drag.cy < r.top + 30) vp.scrollTop -= 24; else if (drag.cy > r.bottom - 30) vp.scrollTop += 24; else return;
+  marqueeUpdate();
+}, 30);
+
+// ---------- контекстное меню ----------
+const menu = $('menu');
+function hideMenu() { menu.style.display = 'none'; }
+layer.addEventListener('contextmenu', (e) => {
+  const t = e.target.closest('[data-i]'); if (!t) return;
+  e.preventDefault();
+  const it = S.list[+t.dataset.i];
+  if (!S.sel.has(it.id)) only(it.id); else setFocus(it.id);
+  changed();
+  const n = S.sel.size;
+  menu.innerHTML = S.folder === 'trash'
+    ? `<div data-a="restore">Восстановить <span>${n}</span></div><div data-a="purge">Стереть навсегда <span>Del</span></div>`
+    : `<div data-a="open">Открыть <span>Enter</span></div>${S.model === 'B' ? '<div data-a="quick">Быстрый просмотр <span>Пробел</span></div>' : ''}<div data-a="props">Свойства <span>Alt+Enter</span></div><hr><div data-a="trash">В корзину${n > 1 ? ' (' + n + ')' : ''} <span>Del</span></div>`;
+  menu.style.display = 'block';
+  menu.style.left = Math.min(e.clientX, innerWidth - 230) + 'px'; menu.style.top = Math.min(e.clientY, innerHeight - 160) + 'px';
+});
+menu.addEventListener('click', (e) => {
+  const a = e.target.closest('[data-a]')?.dataset.a; hideMenu();
+  const i = S.index.get(S.focus);
+  if (a === 'open' || a === 'quick') openViewer(i, a === 'quick');
+  if (a === 'props') { S.props = true; renderProps(); layout(); render(); }
+  if (a === 'trash') toTrash([...S.sel]);
+  if (a === 'restore') restore([...S.sel]);
+  if (a === 'purge') askPurge();
+});
+document.addEventListener('mousedown', (e) => { if (!menu.contains(e.target)) hideMenu(); });
+
+// ---------- корзина и отмена ----------
+function toTrash(ids) {
+  if (!ids.length || S.folder === 'trash') return;
+  const op = [];
+  for (const id of ids) {
+    const it = S.list[S.index.get(id)]; if (!it) continue;
+    const arr = store[it.folder], pos = arr.indexOf(it);
+    op.push({ item: it, folder: it.folder, pos });
+  }
+  op.sort((a, b) => b.pos - a.pos);
+  for (const o of op) { store[o.folder].splice(o.pos, 1); trash.unshift(o); }
+  op.sort((a, b) => a.pos - b.pos);
+  S.undo.push({ type: 'trash', op });
+  const nextFocus = nextAfter(ids);
+  for (const id of ids) S.sel.delete(id);
+  rebuild(true);
+  if (nextFocus !== null && S.model === 'B' && S.viewerAt < 0) { only(nextFocus); changed(); }
+  toast(op.length === 1 ? `В корзине: ${op[0].item.name}` : `В корзину: ${op.length.toLocaleString('ru-RU')}`);
+}
+function nextAfter(ids) { // что выделить после удаления: следующая за последней удалённой
+  const set = new Set(ids); let max = -1;
+  for (const id of ids) max = Math.max(max, S.index.get(id) ?? -1);
+  for (let i = max + 1; i < S.list.length; i++) if (!set.has(S.list[i].id)) return S.list[i].id;
+  for (let i = max - 1; i >= 0; i--) if (!set.has(S.list[i].id)) return S.list[i].id;
+  return null;
+}
+function restore(ids, silent) {
+  const set = new Set(ids), back = trash.filter((t) => set.has(t.item.id));
+  back.sort((a, b) => a.pos - b.pos);
+  for (const o of back) { trash.splice(trash.indexOf(o), 1); items(o.folder).splice(Math.min(o.pos, store[o.folder].length), 0, o.item); }
+  if (!silent) { S.undo.push({ type: 'restore', op: back }); toast(`Восстановлено: ${back.length}`); }
+  S.sel.clear(); rebuild(true);
+  return back;
+}
+function undo() {
+  const u = S.undo.pop(); if (!u) { toast('Нечего отменять', true); return; }
+  if (u.type === 'trash') {
+    const back = restore(u.op.map((o) => o.item.id), true);
+    if (S.folder !== 'trash') { for (const o of back) S.sel.add(o.item.id); if (back[0]) setFocus(back[0].item.id, true); changed(); }
+    if (S.viewerAt >= 0 && back[0]) { S.viewerAt = S.index.get(back[0].item.id) ?? S.viewerAt; showViewer(); }
+    toast(`Возвращено из корзины: ${back.length}`, true);
+  } else if (u.type === 'restore') {
+    for (const o of u.op) { const arr = store[o.folder]; const p = arr.indexOf(o.item); if (p >= 0) arr.splice(p, 1); trash.unshift(o); }
+    rebuild(true); toast('Снова в корзине: ' + u.op.length, true);
+  }
+}
+let toastTimer = 0;
+function toast(text, noUndo) {
+  $('toastText').textContent = text; $('toastUndo').style.display = noUndo ? 'none' : '';
+  $('toast').classList.add('show'); clearTimeout(toastTimer); toastTimer = setTimeout(() => $('toast').classList.remove('show'), 6000);
+}
+$('toastUndo').addEventListener('click', undo);
+$('restoreBtn').addEventListener('click', () => restore([...S.sel]));
+function askPurge() {
+  const n = S.sel.size; if (!n) return;
+  $('mTitle').textContent = `Стереть навсегда: ${n}?`;
+  $('mText').textContent = 'Записи удалятся из сейфа без возможности восстановления. Отменить это нельзя.';
+  $('modal').classList.add('open'); $('mYes').focus();
+}
+$('mNo').addEventListener('click', () => $('modal').classList.remove('open'));
+$('mYes').addEventListener('click', () => {
+  const set = new Set(S.sel);
+  for (let i = trash.length - 1; i >= 0; i--) if (set.has(trash[i].item.id)) trash.splice(i, 1);
+  S.undo = S.undo.filter((u) => !u.op.some((o) => set.has(o.item.id)));
+  $('modal').classList.remove('open'); toast(`Стёрто: ${set.size}`, true); S.sel.clear(); rebuild(true);
+});
+
+// ---------- просмотр ----------
+function openViewer(i, quick) {
+  if (i === undefined || !S.list[i]) return;
+  S.viewerAt = i; S.quick = quick; $('viewer').classList.add('open'); showViewer();
+}
+function closeViewer() {
+  if (S.viewerAt < 0) return;
+  const it = S.list[S.viewerAt];
+  $('viewer').classList.remove('open'); $('vbody').innerHTML = ''; S.viewerAt = -1;
+  if (it) { if (S.model === 'B') only(it.id); else setFocus(it.id); scrollToIndex(S.index.get(it.id)); changed(); }
+  vp.focus();
+}
+function fit(w, h) { const st = $('vstage'), mw = st.clientWidth - 140, mh = st.clientHeight - 10, k = Math.min(mw / w, mh / h); return [Math.round(w * k), Math.round(h * k)]; }
+function showViewer() {
+  const n = S.list.length;
+  if (!n) { closeViewer(); return; }
+  if (S.viewerAt >= n) S.viewerAt = n - 1;
+  const it = S.list[S.viewerAt], body = $('vbody');
+  $('vcnt').textContent = `${(S.viewerAt + 1).toLocaleString('ru-RU')} / ${n.toLocaleString('ru-RU')}${S.quick ? ' · быстрый просмотр (пробел — закрыть)' : ''}`;
+  $('vdel').style.display = S.folder === 'trash' ? 'none' : '';
+  if (it.kind === 'photo' || it.kind === 'video') {
+    const [w, h] = fit(it.w || 1280, it.h || 960);
+    body.innerHTML = `<div class="vimg" style="width:${w}px;height:${h}px;${thumbStyle(it)}">${it.kind === 'video' ? `<div class="th" style="position:static"><div class="play" style="width:64px;height:64px;font-size:24px">▶</div></div>
+      <div class="fakeplayer"><span>▶</span><div class="bar"><i></i></div><span>0:00 / ${fmtDur(it.dur)}</span></div>` : ''}</div>`;
+    if (it.kind === 'video') requestAnimationFrame(() => { const bar = body.querySelector('.bar i'); if (bar) { bar.style.transition = `width ${Math.min(it.dur, 20000)}ms linear`; bar.style.width = '100%'; } });
+  } else if (it.kind === 'link' && it.yt) {
+    const [w, h] = it.short ? fit(9, 16) : fit(16, 9);
+    const cover = `<div style="position:absolute;inset:0;${thumbStyle(it)}"></div>`;
+    if (it.state === 'ok') body.innerHTML = `<div class="ytbox" style="width:${w}px;height:${h}px"><iframe src="https://www.youtube-nocookie.com/embed/${DEMO_YT}?rel=0" title="YouTube" allow="autoplay; encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+    else if (it.state === 'noembed') body.innerHTML = `<div class="ytbox" style="width:${w}px;height:${h}px">${cover}<div class="ytmsg"><p>Автор запретил встраивание (тег «YouTube/Без встраивания»). Сохранены название, описание и обложка.</p><a class="btn primary" href="https://www.youtube.com/watch?v=${DEMO_YT}" target="_blank" rel="noopener" style="text-decoration:none">Открыть на YouTube ↗</a></div></div>`;
+    else body.innerHTML = `<div class="ytbox" style="width:${w}px;height:${h}px">${cover}<div class="ytmsg"><p style="font-size:17px">⊘ Видео недоступно</p><p>Удалено или стало приватным (тег «YouTube/Недоступно»). В сейфе остались название, описание, дата и обложка.</p></div></div>`;
+  } else if (it.kind === 'note') {
+    body.innerHTML = `<div class="notebig"><h2>${esc(it.name.replace(/\.md$/, ''))}</h2>${it.text.map((t, k) => `<label><input type="checkbox" ${k === 0 ? 'checked' : ''}> ${esc(t)}</label>`).join('')}<p style="color:#71717a;font-size:13px;margin-top:14px">Markdown: просмотр и правка чек-листов — этап К4.</p></div>`;
+  } else {
+    body.innerHTML = `<div style="text-align:center;color:var(--dim)"><div style="font-size:64px">${GLYPH[it.kind]}</div><p>${it.kind === 'link' ? esc(it.url) : 'Предпросмотра нет'}</p><button class="btn primary">${it.kind === 'link' ? 'Открыть в браузере ↗' : 'Скачать ' + fmtBytes(it.size)}</button></div>`;
+  }
+  $('vbar').innerHTML = `<span class="vn">${esc(it.name)}</span><span>${KIND[it.kind]}${it.dur ? ' · ' + fmtDur(it.dur) : ''}${it.size ? ' · ' + fmtBytes(it.size) : ''}</span>
+    <span>${fmtDate(it.date)} · ${esc(it.src)} · ${esc(it.chat)}</span>${it.tags.map((t) => `<span class="chip ${t.startsWith('YouTube/') ? 'warn' : ''}">${esc(t)}</span>`).join('')}
+    <span style="margin-left:auto;color:var(--dim2)"><kbd>←</kbd><kbd>→</kbd> листать · <kbd>Del</kbd> в корзину и дальше · <kbd>Ctrl+Z</kbd> вернуть · <kbd>Esc</kbd> закрыть</span>`;
+}
+function viewerStep(d) { const n = S.list.length; if (!n) return; S.viewerAt = Math.max(0, Math.min(n - 1, S.viewerAt + d)); showViewer(); }
+$('vprev').addEventListener('click', () => viewerStep(-1));
+$('vnext').addEventListener('click', () => viewerStep(1));
+$('vclose').addEventListener('click', closeViewer);
+$('vdel').addEventListener('click', viewerDelete);
+$('vinfo').addEventListener('click', () => { S.props = !S.props; renderProps(); layout(); render(); });
+function viewerDelete() {
+  const it = S.list[S.viewerAt]; if (!it || S.folder === 'trash') return;
+  const at = S.viewerAt; toTrash([it.id]); S.viewerAt = at; showViewer();
+}
+$('vstage').addEventListener('click', (e) => { if (e.target === $('vstage') || e.target === $('vbody')) closeViewer(); });
+
+// ---------- клавиатура ----------
+document.addEventListener('keydown', (e) => {
+  const ctrl = e.ctrlKey || e.metaKey, inInput = e.target.matches('input[type=search], select');
+  if ($('modal').classList.contains('open')) { if (e.key === 'Escape') $('modal').classList.remove('open'); if (e.key === 'Enter') $('mYes').click(); return; }
+  if (ctrl && (e.code === 'KeyZ')) { if (inInput) return; e.preventDefault(); undo(); return; }
+  if (ctrl && e.code === 'KeyF') { e.preventDefault(); $('search').focus(); $('search').select(); return; }
+  if (S.viewerAt >= 0) {
+    if (e.key === 'Escape' || (e.key === ' ' && S.quick) || e.key === 'Enter') { e.preventDefault(); closeViewer(); }
+    else if (e.key === 'ArrowRight' || e.key === 'ArrowDown') { e.preventDefault(); viewerStep(1); }
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowUp') { e.preventDefault(); viewerStep(-1); }
+    else if (e.key === 'Delete') { e.preventDefault(); viewerDelete(); }
+    else if (e.code === 'KeyI') { S.props = !S.props; renderProps(); layout(); render(); }
+    return;
+  }
+  if (inInput) { if (e.key === 'Escape' || e.key === 'ArrowDown') { vp.focus(); if (e.key === 'Escape') { e.target.value = ''; S.q = ''; rebuild(false); } } return; }
+  const n = S.list.length; if (!n) return;
+  const cur = S.focus !== null && S.index.has(S.focus) ? S.index.get(S.focus) : -1;
+  const page = Math.max(1, Math.floor(vp.clientHeight / L.rowH)) * L.cols;
+  const nav = { ArrowRight: 1, ArrowLeft: -1, ArrowDown: L.cols, ArrowUp: -L.cols, PageDown: page, PageUp: -page, Home: -1e9, End: 1e9 };
+  if (S.view === 'list') { nav.ArrowRight = 0; nav.ArrowLeft = 0; }
+  if (e.key in nav) {
+    e.preventDefault();
+    let i = cur < 0 ? 0 : Math.max(0, Math.min(n - 1, cur + nav[e.key]));
+    if (e.key === 'ArrowDown' && cur >= 0 && cur + L.cols >= n && Math.floor(cur / L.cols) < L.rows - 1) i = n - 1;
+    const id = S.list[i].id;
+    if (e.shiftKey) { if (S.anchor === null || !S.index.has(S.anchor)) S.anchor = S.list[Math.max(cur, 0)].id; selectRange(S.index.get(S.anchor), i, ctrl); setFocus(id, true); }
+    else if (ctrl) setFocus(id, true);
+    else { only(id); scrollToIndex(i); }
+    changed(); return;
+  }
+  if (e.key === ' ') {
+    e.preventDefault();
+    if (ctrl && S.focus !== null) { toggle(S.focus); changed(); return; }
+    if (S.model === 'B') openViewer(cur < 0 ? 0 : cur, true);
+    return;
+  }
+  if (e.key === 'Enter' && e.altKey) { e.preventDefault(); S.props = !S.props; renderProps(); layout(); render(); return; }
+  if (e.key === 'Enter') { e.preventDefault(); openViewer(cur < 0 ? 0 : cur, false); return; }
+  if (e.key === 'Delete') {
+    e.preventDefault();
+    if (S.folder === 'trash') { if (!S.sel.size && S.focus !== null) S.sel.add(S.focus); askPurge(); return; }
+    const ids = S.sel.size ? [...S.sel] : S.focus !== null ? [S.focus] : [];
+    toTrash(ids); return;
+  }
+  if (ctrl && e.code === 'KeyA') { e.preventDefault(); for (const it of S.list) S.sel.add(it.id); changed(); return; }
+  if (e.key === 'Escape') { S.sel.clear(); changed(); return; }
+  if (e.key === 'F2') { e.preventDefault(); toast('Переименование — как сейчас (F2), в макете не показано', true); }
+});
+
+// ---------- верхняя панель ----------
+function setModel(m) {
+  S.model = m; try { localStorage.setItem('sb-mock-model', m); } catch (e) {}
+  for (const b of $('modelSeg').children) b.classList.toggle('on', b.dataset.m === m);
+  renderStatus(); renderHelp();
+}
+$('modelSeg').addEventListener('click', (e) => { const m = e.target.dataset.m; if (m) { setModel(m); vp.focus(); } });
+$('viewSeg').addEventListener('click', (e) => {
+  const v = e.target.dataset.v; if (!v) return; S.view = v;
+  for (const b of $('viewSeg').children) b.classList.toggle('on', b.dataset.v === v);
+  $('size').style.display = v === 'grid' ? '' : 'none';
+  layout(); if (S.focus !== null) scrollToIndex(S.index.get(S.focus)); render(); vp.focus();
+});
+$('size').addEventListener('input', (e) => { S.tile = +e.target.value; const i = S.index.get(S.focus); layout(); if (i !== undefined) scrollToIndex(i); render(); });
+$('sort').addEventListener('change', (e) => { S.sort = e.target.value; rebuild(false); vp.focus(); });
+let qTimer = 0;
+$('search').addEventListener('input', (e) => { clearTimeout(qTimer); qTimer = setTimeout(() => { S.q = e.target.value.trim(); rebuild(false); }, 150); });
+$('propsBtn').addEventListener('click', () => { S.props = !S.props; renderProps(); layout(); render(); });
+$('helpBtn').addEventListener('click', () => { $('help').style.display = $('help').style.display === 'none' ? '' : 'none'; });
+function renderHelp() {
+  const a = S.model === 'A';
+  $('help').innerHTML = `<h4>Что попробовать — ${a ? 'как сейчас' : 'предлагаю'}<button onclick="this.closest('.help').style.display='none'">✕</button></h4><ul>
+    ${a ? `<li><kbd>клик</kbd> сразу открывает просмотр (фото, видео, YouTube)</li><li>выделить — <kbd>Ctrl</kbd>+клик, <kbd>Shift</kbd>+клик или галочка в углу</li><li>пробел ничего не делает</li>`
+        : `<li><kbd>клик</kbd> выделяет, <kbd>2×клик</kbd> или <kbd>Enter</kbd> открывает</li><li><kbd>Пробел</kbd> — быстрый просмотр, пробел ещё раз — закрыть</li><li><kbd>←↑→↓</kbd> по сетке, <kbd>Shift</kbd>+стрелки — диапазон, <kbd>Ctrl</kbd>+стрелки + <kbd>Ctrl+Пробел</kbd> — выборочно</li>`}
+    <li>рамка мышью с пустого места; у края списка прокручивает сама</li>
+    <li>в просмотре: <kbd>←</kbd> <kbd>→</kbd> листать, <kbd>Del</kbd> — в корзину и сразу следующий (разбор мемов)</li>
+    <li><kbd>Ctrl+Z</kbd> возвращает удалённое на место; корзина слева</li>
+    <li>папка «Мемы» — 48 000 записей: в DOM только видимые плитки (счётчик внизу)</li></ul>
+    <div class="tip">Переключатель «Клик по плитке» вверху — сравнить две модели на тех же данных.</div>`;
+}
+
+setModel(S.model);
+for (const b of $('viewSeg').children) b.classList.toggle('on', b.dataset.v === S.view);
+rebuild(false);
+vp.focus();
+</script>
+</body>
+</html>
